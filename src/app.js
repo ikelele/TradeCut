@@ -424,7 +424,12 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
   async function start() {
     const missingTools = await checkFfmpegToolsAvailable()
     if (missingTools.length > 0) {
-      const message = `Не найдены в PATH: ${missingTools.join(', ')}. Обрезка клипов работать не будет, пока не установишь ffmpeg и не добавишь его папку bin в PATH.`
+      // ffmpeg и ffprobe едут внутри сборки, поэтому "поставь их сам" — уже не
+      // тот совет: если их нет, значит повреждена или неполна сама установка.
+      const { describeTools } = require('./ffmpegTools')
+      const paths = describeTools()
+      const message = `Не запускаются: ${missingTools.join(', ')}. Они входят в состав программы, так что, скорее всего, установка повреждена — переустанови её. ` +
+        `Искали здесь: ${paths.ffmpeg}, ${paths.ffprobe}. Без них нарезка клипов работать не будет.`
       log(message)
       if (onIssue) onIssue(message)
     }
