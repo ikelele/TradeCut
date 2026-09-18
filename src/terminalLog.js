@@ -175,4 +175,37 @@ function createTerminalLogWatcher({
   }
 }
 
-module.exports = { createTerminalLogWatcher, getAdapter, listTerminalTypes, DEFAULT_TERMINAL }
+// Проверка "а видит ли программа журнал этого терминала" — для помощника
+// первой настройки.
+//
+// Это самая тихая из возможных поломок: терминал выбран не тот (или лежит не
+// там, где ожидается), сделки закрываются, а клипов нет — и узнать почему
+// неоткуда. Здесь мы честно показываем папку, в которую смотрим, и что в ней
+// нашлось.
+async function checkTerminalLogs(terminalType, logsDirOverride) {
+  const adapter = getAdapter(terminalType)
+  const logsDir = adapter.resolveLogsDir(logsDirOverride)
+
+  let files = []
+  try {
+    files = await adapter.listLogFiles(logsDir)
+  } catch (error) {
+    return { terminalName: adapter.displayName, logsDir, files: [], error: error.message }
+  }
+
+  // Дата последней записи важнее самого факта наличия файлов: файл может
+  // остаться с прошлого года, и тогда "журнал найден" вводило бы в заблуждение.
+  let lastWriteMs = null
+  for (const file of files) {
+    try {
+      const stat = await fsp.stat(file)
+      if (lastWriteMs === null || stat.mtimeMs > lastWriteMs) lastWriteMs = stat.mtimeMs
+    } catch {
+      // файл исчез между листингом и stat — на ответ проверки это не влияет
+    }
+  }
+
+  return { terminalName: adapter.displayName, logsDir, files, lastWriteMs }
+}
+
+module.exports = { createTerminalLogWatcher, getAdapter, listTerminalTypes, checkTerminalLogs, DEFAULT_TERMINAL }

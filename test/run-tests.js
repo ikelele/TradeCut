@@ -206,6 +206,34 @@ function testTerminalAdapters() {
   console.log('[OK] testTerminalAdapters')
 }
 
+// Проверка журнала из помощника первой настройки. Она должна отвечать честно
+// в обе стороны: нашла — сколько файлов и когда была последняя запись, не
+// нашла — какую именно папку смотрела. Молчаливое "ничего не найдено" здесь
+// хуже всего: именно из-за него "сделки закрываются, а клипов нет".
+async function testCheckTerminalLogs() {
+  const { checkTerminalLogs } = require('../src/terminalLog')
+
+  const logsDir = path.join(__dirname, '..', 'test-assets', 'setup-check', 'Data', 'Logs')
+  fs.mkdirSync(logsDir, { recursive: true })
+  const logPath = path.join(logsDir, 'WorkLog_20260918.log')
+  fs.writeFileSync(logPath, 'проверочная строка\n', 'utf8')
+
+  const found = await checkTerminalLogs('tigertrade', path.join(__dirname, '..', 'test-assets', 'setup-check'))
+  assert.strictEqual(found.terminalName, 'TigerTrade')
+  assert.ok(found.files.length >= 1, 'журнал в указанной папке должен найтись')
+  assert.ok(found.files.some((file) => file.endsWith('WorkLog_20260918.log')), 'должен найтись именно наш файл')
+  assert.ok(Number.isFinite(found.lastWriteMs), 'должно вернуться время последней записи')
+
+  // Папки нет вовсе — это не исключение, а обычный ответ "не нашлось", и в нём
+  // обязательно должен быть путь: иначе человеку нечего проверять глазами.
+  const missing = await checkTerminalLogs('tigertrade', path.join(__dirname, '..', 'test-assets', 'setup-check-nope'))
+  assert.deepStrictEqual(missing.files, [], 'в несуществующей папке файлов быть не должно')
+  assert.ok(missing.logsDir.includes('setup-check-nope'), 'ответ должен называть папку, в которую смотрели')
+
+  fs.rmSync(path.join(__dirname, '..', 'test-assets', 'setup-check'), { recursive: true, force: true })
+  console.log('[OK] testCheckTerminalLogs')
+}
+
 // Общая машина состояний watcher'а на примере TigerTrade: открытие -> закрытие,
 // и отдельно разворот позиции (лонг сразу в шорт, без прохода через ноль).
 async function testTerminalWatcherStateMachine() {
@@ -1235,6 +1263,7 @@ async function main() {
   testBuildDailyOutputDir()
   testGetStakanBounds()
   testBuildAtempoFilter()
+  await testCheckTerminalLogs()
   await testTerminalWatcherStateMachine()
   await testBatcherWaitsForOpenPosition()
   await testBatcherSplitsOnLongGap()

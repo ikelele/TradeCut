@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'">
+  <link rel="stylesheet" href="app.css">
+  <title>Первая настройка</title>
+</head>
+<body>
+  <div class="title-row">
+    <h1>Первая настройка</h1>
+    <span class="step-counter" id="step-counter"></span>
+  </div>
+  <p class="hint">Три шага, минуты на две. Каждый можно проверить прямо здесь — сразу видно, работает или нет. Настройку можно пропустить и вернуться к ней позже, кнопка «?» в настройках.</p>
+
+  <div class="scroll-area">
+
+    <section class="help-block step" id="step-obs">
+      <h2>Шаг 1. Подключение к OBS</h2>
+      <p>Экран записывает OBS, а программа просит у него последние минуты и вырезает оттуда твою сделку. Поэтому без OBS она работать не будет.</p>
+      <ol>
+        <li>В OBS: <b>Инструменты → Настройки сервера WebSocket</b> → поставь галку «Включить сервер».</li>
+        <li>Там же нажми <b>«Показать пароль»</b> и скопируй его сюда.</li>
+        <li>И включи сам буфер: <b>Настройки → Вывод → «Включить буфер повтора»</b>, длину поставь с запасом, минут пять.</li>
+      </ol>
+
+      <div class="field">
+        <label class="field-label" for="obs-url">Адрес подключения</label>
+        <input type="text" id="obs-url" placeholder="ws://127.0.0.1:4455">
+        <p class="field-hint">Если OBS на этом же компьютере, менять не нужно</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="obs-password">Пароль от OBS</label>
+        <input type="password" id="obs-password">
+      </div>
+
+      <button type="button" class="secondary" id="check-obs">Проверить подключение</button>
+      <div class="status" id="obs-status"></div>
+    </section>
+
+    <section class="help-block step" id="step-terminal" hidden>
+      <h2>Шаг 2. Твой терминал</h2>
+      <p>Время входа и выхода программа берёт из файлов журнала торгового терминала. В сам терминал она не подключается и ничего в нём не меняет — только читает эти файлы.</p>
+
+      <div class="field">
+        <label class="field-label">Каким терминалом торгуешь</label>
+        <div class="options" data-role="terminal"></div>
+      </div>
+
+      <button type="button" class="secondary" id="check-terminal">Проверить журнал</button>
+      <div class="status" id="terminal-status"></div>
+      <p class="field-hint">Папку указывать не нужно — она находится сама. Если журнал не нашёлся, это можно поправить позже в настройках, там есть поле для своего пути.</p>
+    </section>
+
+    <section class="help-block step" id="step-areas" hidden>
+      <h2>Шаг 3. Области кадра</h2>
+      <p>На экране обычно открыто несколько стаканов рядом, а для разбора нужен один. Программа умеет вырезать из клипа нужную часть кадра — но сначала надо показать ей, где эта часть. Размечается один раз, дальше режется в два клика из меню трея.</p>
+      <p>Кадр для разметки взять пока неоткуда: клипов ещё нет ни одного. Поэтому его возьмём прямо из буфера OBS.</p>
+      <ol>
+        <li>Открой терминал на экране так, как он выглядит во время торговли.</li>
+        <li>Нажми кнопку ниже — программа сохранит короткий повтор и откроет его окном разметки.</li>
+        <li>Дальше подсказка будет в самом окне.</li>
+      </ol>
+
+      <button type="button" class="primary" id="save-replay">Сохранить повтор и разметить области</button>
+      <div class="status" id="areas-status"></div>
+      <p class="field-hint">Шаг необязательный. Без него программа работает точно так же, просто клипы будут в полный экран, а области можно настроить когда угодно потом.</p>
+    </section>
+
+  </div>
+
+  <div class="actions">
+    <button type="button" class="primary" id="next">Дальше</button>
+    <button type="button" class="secondary" id="back" hidden>Назад</button>
+    <button type="button" class="secondary skip-button" id="skip">Пропустить настройку</button>
+  </div>
+
+  <script src="setup.js"></script>
+</body>
+</html>

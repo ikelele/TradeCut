@@ -7,7 +7,7 @@ const { createUpdater } = require('./updater')
 const { createTray } = require('./tray')
 const { createNotifier } = require('./notifier')
 const autostart = require('./autostart')
-const { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow } = require('./windows')
+const { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
 
 const APP_USER_MODEL_ID = 'com.tradecut.app'
 
@@ -15,6 +15,11 @@ const APP_USER_MODEL_ID = 'com.tradecut.app'
 // осознанно: в argv может прилететь что угодно (ключи Electron, пути), а
 // открывать окно обрезки имеет смысл только для настоящего видеофайла.
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.mov', '.avi', '.flv', '.ts', '.webm', '.m4v'])
+
+// Длина повтора, который помощник сохраняет ради одного кадра с терминалом.
+// Короткий намеренно: он нужен как картинка для разметки областей, а не как
+// запись, и лишние минуты тут только ждать дольше.
+const SETUP_REPLAY_SEC = 15
 
 function findVideoFileArg(argv) {
   for (const arg of argv.slice(1)) {
@@ -67,6 +72,10 @@ function main() {
   // свой файл само (crop:dropped-file), т.к. одновременно может быть открыто
   // несколько окон с разными файлами.
   const cropWindowFiles = new Map()
+  // Окна обрезки, открытые помощником первой настройки: в них сверху висит
+  // порядок действий. Отдельным множеством, а не полем в cropWindowFiles,
+  // чтобы не менять то, что окно уже спрашивает про свой файл.
+  const guidedCropWindows = new Set()
 
   let logger = null
   let log = (message) => console.log(message)
@@ -76,10 +85,15 @@ function main() {
   let updater = null
   let config = null
 
-  function openCropWindowFor(filePath) {
+  function openCropWindowFor(filePath, { guided = false } = {}) {
     const win = openCropWindow()
-    cropWindowFiles.set(win.webContents.id, filePath)
-    win.on('closed', () => cropWindowFiles.delete(win.webContents.id))
+    const id = win.webContents.id
+    cropWindowFiles.set(id, filePath)
+    if (guided) guidedCropWindows.add(id)
+    win.on('closed', () => {
+      cropWindowFiles.delete(id)
+      guidedCropWindows.delete(id)
+    })
     return win
   }
 
@@ -110,12 +124,15 @@ function main() {
 
     // Загружаем конфиг и логгер только после initAppPaths — они пишут рядом с
     // exe / в %LOCALAPPDATA% и зависят от вычисленных путей.
-    const { loadConfig } = require('../src/config')
+    const { loadConfig, wasConfigJustCreated } = require('../src/config')
     const { createLogger } = require('../src/logger')
 
     logger = createLogger()
     log = logger.log
     config = loadConfig()
+    // Спрашиваем сразу после загрузки: признак живёт внутри config.js и
+    // относится к тому, был ли файл создан этим самым вызовом loadConfig.
+    const firstRun = wasConfigJustCreated()
     notifier = createNotifier({ log })
 
     registerIpcHandlers()
@@ -127,6 +144,14 @@ function main() {
     }
 
     await startTrayApp()
+
+    // Помощник первой настройки — после того, как трей поднялся: он проверяет
+    // подключение к OBS и умеет сохранить повтор, а для этого нужно уже
+    // работающее приложение, а не только окно.
+    if (firstRun) {
+      log('Первый запуск: config.json создан заново, открываю помощника настройки')
+      openSetupWindow()
+    }
 
     // Проверка обновлений идёт последней и в фоне: она не должна задерживать
     // запуск слежения за сделками.
@@ -143,6 +168,42 @@ function main() {
     ipcMain.handle('trades:list', () => (appCore ? appCore.getRecentClips() : []))
 
     ipcMain.handle('crop:dropped-file', (event) => cropWindowFiles.get(event.sender.id) || null)
+
+    ipcMain.handle('crop:guided', (event) => guidedCropWindows.has(event.sender.id))
+
+    // Проверки помощника первой настройки. Смысл всех трёх один: показать
+    // человеку результат сразу, а не оставить выяснять по цвету значка в трее,
+    // почему ничего не происходит.
+    ipcMain.handle('setup:check-obs', async (_event, url, password) => {
+      const { checkObsConnection } = require('../src/obsClient')
+      const result = await checkObsConnection({ url, password })
+      log(`Проверка OBS (${url}): ${result.connected ? 'подключено' : 'не подключено'}` +
+        `${result.connected ? `, буфер повтора ${result.replayBufferActive ? 'включён' : 'выключен'}` : ''}` +
+        `${result.error ? ` — ${result.error}` : ''}`)
+      return result
+    })
+
+    ipcMain.handle('setup:check-terminal', async (_event, terminalType) => {
+      const { checkTerminalLogs } = require('../src/terminalLog')
+      const result = await checkTerminalLogs(terminalType, config.terminal.logsDirOverride)
+      log(`Проверка журнала ${result.terminalName}: ${result.logsDir} — файлов ${result.files.length}`)
+      return result
+    })
+
+    // Первый запуск: клипов ещё нет ни одного, а размечать области можно
+    // только по картинке. Поэтому кадр берём прямо из буфера OBS — он к этому
+    // моменту уже настроен предыдущими шагами и держит последние минуты экрана.
+    ipcMain.handle('setup:save-replay', async () => {
+      if (!appCore) return { error: 'Слежение за сделками ещё не запущено' }
+
+      const { clipPath, error } = await appCore.saveManualReplay(SETUP_REPLAY_SEC)
+      if (error) return { error }
+
+      openCropWindowFor(clipPath, { guided: true })
+      return { clipPath }
+    })
+
+    ipcMain.on('setup:open', () => openSetupWindow())
 
     ipcMain.handle('dialog:pick-video', async (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)

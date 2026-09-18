@@ -20,9 +20,13 @@ fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
   clip: { outputDir: './clips' }
 }, null, 2), 'utf8')
 
-const { loadConfig, saveConfig } = require('../src/config')
+const { loadConfig, saveConfig, wasConfigJustCreated } = require('../src/config')
 
 const config = loadConfig()
+// Обратная сторона первого запуска: config.json уже лежал на диске, значит
+// помощник настройки открываться не должен. Тем, кто обновляется со старой
+// версии, он не покажется именно поэтому.
+assert.strictEqual(wasConfigJustCreated(), false, 'готовый config.json не должен считаться первым запуском')
 // Терминал по умолчанию — TigerTrade, но у этого конфига есть старая секция
 // vataga: значит человек торговал на Vataga, и обновление не должно молча
 // переключать его на другой терминал.

@@ -183,12 +183,23 @@ const DEFAULT_CONFIG = {
   }
 }
 
+// Признак того, что config.json создан прямо сейчас, а не прочитан готовый.
+// По нему открывается помощник первой настройки — отдельного ключа в конфиге
+// для этого заводить не надо: файл появляется ровно один раз за установку, и
+// тем, кто обновляется со старой версии, помощник не покажется.
+let configCreatedOnThisRun = false
+
 function ensureConfigExists() {
   if (!fs.existsSync(CONFIG_PATH)) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8')
+    configCreatedOnThisRun = true
     console.log(`[config] Создан config.json со значениями по умолчанию: ${CONFIG_PATH}`)
     console.log('[config] Открой его и укажи пароль OBS WebSocket (Tools -> WebSocket Server Settings).')
   }
+}
+
+function wasConfigJustCreated() {
+  return configCreatedOnThisRun
 }
 
 // Раньше секция называлась "vataga" (других терминалов не было). Чтобы у тех,
@@ -304,4 +315,4 @@ function saveConfig(incoming) {
   return normalized
 }
 
-module.exports = { loadConfig, saveConfig, CONFIG_PATH, DEFAULT_CONFIG }
+module.exports = { loadConfig, saveConfig, wasConfigJustCreated, CONFIG_PATH, DEFAULT_CONFIG }

@@ -61,7 +61,7 @@ for (const channel of handled) {
 notes.push(`каналов IPC: ${requested.length}, все обработаны`)
 
 // ── 3. getElementById из окна должен существовать в его разметке ───────────
-const pageOfScript = { 'settings.js': 'settings.html', 'crop.js': 'crop.html', 'trades.js': 'trades.html', 'help.js': 'help.html' }
+const pageOfScript = { 'settings.js': 'settings.html', 'crop.js': 'crop.html', 'trades.js': 'trades.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
 for (const [script, page] of Object.entries(pageOfScript)) {
   if (!rendererJs.includes(script) || !rendererHtml.includes(page)) continue
   const source = read('electron', 'renderer', script)

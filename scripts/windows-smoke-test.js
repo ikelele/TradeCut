@@ -101,6 +101,29 @@ app.whenReady().then(async () => {
     { name: 'Левый стакан', x: 0, y: 0, width: 160, height: 240, sourceWidth: 320, sourceHeight: 240 }
   ]))
 
+  // Помощник первой настройки. Проверки возвращают заранее известные ответы —
+  // нам важно не поговорить с настоящим OBS, а увидеть, что окно правильно
+  // показывает три разных исхода: не подключилось / подключилось без буфера /
+  // всё готово. Их легко перепутать в один красный цвет, а действия у них разные.
+  const OBS_ANSWERS = [
+    { connected: false, replayBufferActive: false, error: 'проверочный отказ' },
+    { connected: true, replayBufferActive: false },
+    { connected: true, replayBufferActive: true }
+  ]
+  let obsAnswerIndex = 0
+  ipcMain.handle('setup:check-obs', () => OBS_ANSWERS[Math.min(obsAnswerIndex++, OBS_ANSWERS.length - 1)])
+  ipcMain.handle('setup:check-terminal', (_event, terminalType) => ({
+    terminalName: terminalType === 'vataga' ? 'Vataga' : 'TigerTrade',
+    logsDir: 'C:\\проверка\\Logs',
+    files: ['C:\\проверка\\Logs\\WorkLog_20260918.log'],
+    lastWriteMs: Date.UTC(2026, 8, 18, 9, 30)
+  }))
+  ipcMain.handle('setup:save-replay', () => ({ clipPath: 'C:\\replays\\проверка.mp4' }))
+  // Окно обрезки спрашивает это при каждом открытии
+  ipcMain.handle('crop:guided', () => false)
+  // Помощник сохраняет настройки на каждом переходе между шагами
+  ipcMain.handle('config:save', (_event, incoming) => incoming)
+
   const settings = await openPage('settings.html')
   await check(settings, 'settings.html', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
   await check(settings, 'settings.html', 'поле адреса OBS заполнено из конфига',
@@ -211,6 +234,18 @@ app.whenReady().then(async () => {
      })()`, (v) => typeof v === 'string' && !v.includes('Нечего делать'))
   await check(crop, 'crop.html', 'зона перетаскивания есть',
     '!!document.getElementById("dropzone")', (v) => v === true)
+  // Подсказка помощника: обычное окно обрезки её не показывает (заглушка
+  // crop:guided отвечает "нет"), но сама разметка и проброс должны быть на месте.
+  await check(crop, 'crop.html', 'подсказка помощника есть и в обычном окне скрыта',
+    `(() => {
+       const banner = document.getElementById('guided-banner')
+       return {
+         exists: !!banner,
+         hidden: banner ? banner.hidden : null,
+         steps: banner ? banner.querySelectorAll('li').length : 0,
+         wired: typeof window.api.isGuidedCrop === 'function'
+       }
+     })()`, (v) => v && v.exists === true && v.hidden === true && v.steps === 4 && v.wired === true)
   await check(crop, 'crop.html', 'getPathForFile проброшен в окно',
     'typeof window.api.getPathForFile', (v) => v === 'function')
 
@@ -420,6 +455,89 @@ app.whenReady().then(async () => {
       return { before, after: box.style.width, size: preview.querySelector('[data-role="size"]').textContent }
     })()
   `, (v) => v && v.before !== v.after && /^\d+x\d+ из 320x240$/.test(v.size || ''))
+
+  // Помощник первой настройки. Главное, что здесь может молча сломаться:
+  // шаги перестают переключаться, проверки показывают не тот исход, а данные
+  // с предыдущего шага теряются при переходе на следующий.
+  const setup = await openPage('setup.html')
+  await check(setup, 'setup.html', 'открывается на первом шаге из трёх', `
+    (() => ({
+      counter: document.getElementById('step-counter').textContent,
+      obsShown: !document.getElementById('step-obs').hidden,
+      terminalShown: !document.getElementById('step-terminal').hidden,
+      backHidden: document.getElementById('back').hidden
+    }))()
+  `, (v) => v && /1 из 3/.test(v.counter || '') && v.obsShown === true
+       && v.terminalShown === false && v.backHidden === true)
+
+  await check(setup, 'setup.html', 'поля OBS заполнены из конфига',
+    'document.getElementById("obs-url").value', (v) => v === config.obs.url)
+
+  // Три исхода проверки OBS должны читаться по-разному: не подключилось —
+  // ошибка, подключилось без буфера — предупреждение (пароль-то верный),
+  // всё включено — успех.
+  await check(setup, 'setup.html', 'проверка OBS различает три исхода', `
+    (async () => {
+      const button = document.getElementById('check-obs')
+      const status = document.getElementById('obs-status')
+      const results = []
+      for (let i = 0; i < 3; i++) {
+        button.click()
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        results.push({ cls: status.className, text: status.textContent })
+      }
+      return results
+    })()
+  `, (v) => Array.isArray(v) && v.length === 3
+       && /error/.test(v[0].cls) && /warn/.test(v[1].cls) && /ok/.test(v[2].cls)
+       && /буфер повтора/.test(v[1].text))
+
+  await check(setup, 'setup.html', 'переход на второй шаг сохраняет введённый пароль OBS', `
+    (async () => {
+      document.getElementById('obs-password').value = 'пароль-для-проверки'
+      document.getElementById('next').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      return {
+        counter: document.getElementById('step-counter').textContent,
+        terminalShown: !document.getElementById('step-terminal').hidden,
+        backShown: !document.getElementById('back').hidden
+      }
+    })()
+  `, (v) => v && /2 из 3/.test(v.counter || '') && v.terminalShown === true && v.backShown === true)
+
+  await check(setup, 'setup.html', 'есть выбор терминала и проверка журнала показывает папку', `
+    (async () => {
+      const options = [...document.querySelectorAll('[data-role=terminal] .option')].map(b => b.textContent)
+      document.getElementById('check-terminal').click()
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      const status = document.getElementById('terminal-status')
+      return { options, cls: status.className, text: status.textContent }
+    })()
+  `, (v) => v && v.options.includes('Vataga') && v.options.includes('TigerTrade')
+       && /ok/.test(v.cls) && /Logs/.test(v.text) && /последняя запись/.test(v.text))
+
+  await check(setup, 'setup.html', 'на третьем шаге кнопка становится «Готово», а «Пропустить» уходит', `
+    (async () => {
+      document.getElementById('next').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      return {
+        counter: document.getElementById('step-counter').textContent,
+        areasShown: !document.getElementById('step-areas').hidden,
+        nextLabel: document.getElementById('next').textContent,
+        skipHidden: document.getElementById('skip').hidden
+      }
+    })()
+  `, (v) => v && /3 из 3/.test(v.counter || '') && v.areasShown === true
+       && v.nextLabel === 'Готово' && v.skipHidden === true)
+
+  await check(setup, 'setup.html', 'сохранение повтора отчитывается об успехе', `
+    (async () => {
+      document.getElementById('save-replay').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const status = document.getElementById('areas-status')
+      return { cls: status.className, text: status.textContent }
+    })()
+  `, (v) => v && /ok/.test(v.cls) && /окно разметки/.test(v.text))
 
   const trades = await openPage('trades.html')
   await check(trades, 'trades.html', 'список сделок отрисован',

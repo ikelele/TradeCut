@@ -1,12 +1,12 @@
 {
   "name": "tradecut",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Режет клипы твоих сделок из буфера повтора OBS по журналу торгового терминала",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "pretest": "node -e \"require('fs').mkdirSync('test-assets',{recursive:true})\" && ffmpeg -y -f lavfi -i \"testsrc=duration=10:size=320x240:rate=25\" -c:v libx264 -pix_fmt yuv420p test-assets/fake-replay.mkv",
-    "test": "node scripts/wiring-audit.js && node test/run-tests.js && node scripts/settings-save-smoke-test.js",
+    "test": "node scripts/wiring-audit.js && node test/run-tests.js && node scripts/settings-save-smoke-test.js && node scripts/first-run-smoke-test.js",
     "build:icons": "node scripts/generate-icons.js",
     "package": "npm run build:icons && electron-builder --win",
     "test:windows": "electron scripts/windows-smoke-test.js",

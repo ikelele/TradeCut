@@ -20,6 +20,17 @@ contextBridge.exposeInMainWorld('api', {
   // Пустое окно обрезки — оттуда настраиваются свои области кадра
   openCropWindow: () => ipcRenderer.send('crop:open'),
   openHelp: () => ipcRenderer.send('help:open'),
+  openSetup: () => ipcRenderer.send('setup:open'),
+
+  // Помощник первой настройки проверяет то, что ввели, ещё до сохранения:
+  // иначе "почему не работает" выясняется молча и сильно позже.
+  checkObs: (url, password) => ipcRenderer.invoke('setup:check-obs', url, password),
+  checkTerminal: (terminalType) => ipcRenderer.invoke('setup:check-terminal', terminalType),
+  // Короткий повтор ради кадра: на первом запуске клипов ещё нет, а настроить
+  // области можно только по картинке. Открывает окно обрезки с этим файлом.
+  saveSetupReplay: () => ipcRenderer.invoke('setup:save-replay'),
+  // Окно обрезки, открытое помощником, показывает сверху порядок действий
+  isGuidedCrop: () => ipcRenderer.invoke('crop:guided'),
   // Крестик окна при открытом превью: основной процесс просит закрыть превью
   // вместо самого окна.
   onPreviewDismiss: (listener) => {

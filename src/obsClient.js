@@ -8,6 +8,40 @@ const { OBSWebSocket } = require('obs-websocket-js')
 
 // state: 'connecting' | 'connected' | 'disconnected' — используется треем для
 // выбора иконки (зелёная/жёлтая), отдельно от текстового лога onStatus.
+// Разовая проверка подключения — для помощника первой настройки.
+//
+// Отдельно от createObsClient специально: тому нужны переподключения, очередь
+// и состояние, а здесь нужен один честный ответ по значениям, которые человек
+// только что напечатал в поле и ещё никуда не сохранил. Ошибку не кидаем:
+// "не подключилось" — это нормальный ответ проверки, а не сбой.
+async function checkObsConnection({ url, password, timeoutMs = 8000 }) {
+  const obs = new OBSWebSocket()
+  const timeout = new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new Error(`OBS не ответил за ${Math.round(timeoutMs / 1000)}с`)), timeoutMs)
+  })
+
+  try {
+    await Promise.race([obs.connect(url, password || undefined), timeout])
+  } catch (error) {
+    return { connected: false, replayBufferActive: false, error: error.message }
+  }
+
+  try {
+    const status = await Promise.race([obs.call('GetReplayBufferStatus'), timeout])
+    return { connected: true, replayBufferActive: Boolean(status.outputActive) }
+  } catch (error) {
+    // Подключились, но про буфер спросить не смогли — это уже другой разговор,
+    // и путать его с неудачным подключением нельзя.
+    return { connected: true, replayBufferActive: false, error: error.message }
+  } finally {
+    try {
+      await obs.disconnect()
+    } catch {
+      // соединение уже закрыто — проверке это безразлично
+    }
+  }
+}
+
 function createObsClient({ url, password, onStatus, onStatusChange }) {
   const obs = new OBSWebSocket()
   let connected = false
@@ -129,4 +163,4 @@ function createObsClient({ url, password, onStatus, onStatusChange }) {
   }
 }
 
-module.exports = { createObsClient }
+module.exports = { createObsClient, checkObsConnection }

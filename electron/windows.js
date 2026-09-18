@@ -163,6 +163,24 @@ function openHelpWindow() {
   return helpWindow
 }
 
+// Помощник первой настройки. Открывается сам один раз — когда config.json
+// создан прямо при этом запуске, — и потом по кнопке из окна "?".
+let setupWindow = null
+
+function openSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    return raiseWindow(setupWindow)
+  }
+  setupWindow = createWindow({
+    page: 'setup.html',
+    width: 660,
+    height: 700,
+    title: 'TradeCut — первая настройка'
+  })
+  setupWindow.on('closed', () => { setupWindow = null })
+  return setupWindow
+}
+
 // Окно настроек — единственное, как и окно сделок: незачем открывать две
 // копии, которые будут перезаписывать config.json друг за другом.
 let settingsWindow = null
@@ -181,4 +199,4 @@ function openSettingsWindow() {
   return settingsWindow
 }
 
-module.exports = { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow }
+module.exports = { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow, openSetupWindow }

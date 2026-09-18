@@ -75,8 +75,27 @@ app.whenReady().then(async () => {
   ipcMain.handle('panels:detect', () => ({
     vertical: [0, 100, 200], horizontal: [30], variants: [[0, 100, 200]], width: 320, height: 240
   }))
+  ipcMain.handle('config:save', (_e, incoming) => incoming)
+  ipcMain.handle('crop:guided', () => true)
+  ipcMain.handle('setup:check-obs', () => ({ connected: true, replayBufferActive: true }))
+  ipcMain.handle('setup:check-terminal', () => ({
+    terminalName: 'TigerTrade',
+    logsDir: 'C:\\Users\\Trader\\AppData\\Roaming\\TigerTrade\\Data\\Logs',
+    files: ['WorkLog_20260918.log', 'WorkLog_20260917.log'],
+    lastWriteMs: Date.now()
+  }))
+  ipcMain.handle('setup:save-replay', () => ({ clipPath: 'C:\\Trades\\replays\\повтор.mp4' }))
 
   await shoot('settings.html', { width: 700, height: 720 })
+  await shoot('setup.html', { width: 660, height: 700 })
+
+  // Помощник после проверки OBS — тот вид, ради которого он и сделан
+  await shoot('setup.html', { width: 660, height: 700 }, `
+    new Promise((resolve) => {
+      document.getElementById('check-obs').click()
+      setTimeout(resolve, 400)
+    })
+  `)
   await shoot('help.html', { width: 680, height: 720 })
   await shoot('trades.html', { width: 760, height: 560 })
   await shoot('crop.html', { width: 620, height: 700 })

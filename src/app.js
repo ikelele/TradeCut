@@ -332,7 +332,15 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
 
   // Ручное "сохранить последние N" из меню трея. Идёт через ту же очередь, что
   // и остальные обращения к OBS, чтобы не пересечься с сохранением по сделке.
+  //
+  // Возвращает { clipPath, error } и НИКОГДА не отклоняется: из трея результат
+  // никому не нужен (там своё уведомление), а помощник первой настройки ждёт
+  // путь к файлу, чтобы открыть его для разметки областей. Отклоняйся оно —
+  // вызов из трея стал бы необработанным отказом промиса.
   function saveManualReplay(durationSec) {
+    let settle
+    const result = new Promise((resolve) => { settle = resolve })
+
     enqueue(
       async () => {
         log(`Сохраняю повтор последних ${durationSec}с по команде из трея`)
@@ -345,13 +353,17 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
         log(`Повтор сохранён: ${clipPath}`)
         await deleteSourceReplayIfEnabled(replayPath, config, log)
         if (onManualReplayReady) onManualReplayReady(clipPath, durationSec)
+        settle({ clipPath, error: null })
       },
       (error) => {
         const message = `Не удалось сохранить повтор: ${error.message}`
         log(message)
         if (onIssue) onIssue(message)
+        settle({ clipPath: null, error: error.message })
       }
     )
+
+    return result
   }
 
   // Ручная обрезка по ширине ("стакану") уже готового клипа — вызывается из
