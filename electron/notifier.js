@@ -22,6 +22,12 @@ function createNotifier({ log }) {
     notifyIssue(message) {
       safeNotify('TradeCut', message)
     },
+    // Ответ на повторный щелчок по ярлыку. Без него это выглядит как "программа
+    // не запускается": окна у неё нет, а значок в трее легко не заметить —
+    // особенно если Windows спрятала его под стрелку.
+    notifyAlreadyRunning() {
+      safeNotify('TradeCut уже работает', 'Значок — в области уведомлений, рядом с часами. Правый щелчок по нему открывает меню.')
+    },
     notifyManualReplayReady(clipPath, durationSec) {
       const label = durationSec % 60 === 0 && durationSec >= 60
         ? `${durationSec / 60} мин`

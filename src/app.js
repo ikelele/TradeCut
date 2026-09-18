@@ -446,14 +446,21 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
       onStatusChange: handleObsStatusChange
     })
 
-    try {
-      await obsClient.connect()
-    } catch (error) {
-      log(`Не удалось подключиться к OBS: ${error.message}`)
-      log('Проверь: OBS запущен, сервер WebSocket включён (Сервис → Настройки сервера WebSocket), пароль в config.json верный.')
-      // Дальше не бросаем и не завершаем процесс — obsClient сам продолжит
-      // попытки переподключения в фоне, статус в трее отразит это состояние.
-    }
+    // Подключение к OBS НЕ ждём.
+    //
+    // Раньше здесь стоял await, и это было терпимо, пока неудача приходила
+    // мгновенно. Но OBS умеет принять соединение и замолчать — тогда попытка
+    // упирается в срок ожидания, и всё это время приложение выглядит
+    // незапустившимся: окно помощника настройки, например, открывается только
+    // после startTrayApp.
+    //
+    // Ждать тут и нечего: значок в трее показывает состояние связи сам, а
+    // переподключением занимается obsClient. Всё, что зависит от OBS,
+    // происходит по событиям и проверяет связь само.
+    obsClient.connect().catch(() => {
+      // Причину уже написал сам obsClient — здесь только подсказка, что делать.
+      log('Проверь: OBS запущен, сервер WebSocket включён (Сервис → Настройки сервера WebSocket), пароль в настройках верный.')
+    })
 
     const checkIntervalMs = config.obs.replayBufferCheckIntervalSec * 1000
     replayBufferCheckTimer = setInterval(() => { void checkReplayBufferStatus() }, checkIntervalMs)

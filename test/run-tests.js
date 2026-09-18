@@ -206,6 +206,55 @@ function testTerminalAdapters() {
   console.log('[OK] testTerminalAdapters')
 }
 
+// Запуск не должен ждать подключения к OBS.
+//
+// Пока неудача приходила мгновенно, ожидание было незаметным. Но OBS умеет
+// принять соединение и замолчать — тогда попытка упирается в срок ожидания, и
+// всё это время приложение выглядит незапустившимся: окно помощника настройки,
+// например, открывается только после того, как startTrayApp договорит.
+async function testStartDoesNotWaitForObs() {
+  const net = require('net')
+  const os = require('os')
+  const { createApp } = require('../src/app')
+  const { DEFAULT_CONFIG } = require('../src/config')
+
+  const sockets = []
+  const server = net.createServer((socket) => sockets.push(socket))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+
+  // Свою временную папку приложение при старте чистит — подсовываем ему
+  // отдельную, чтобы тест не трогал файлы работающей копии.
+  const previousLocalAppData = process.env.LOCALAPPDATA
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-start-'))
+  process.env.LOCALAPPDATA = tmpHome
+
+  try {
+    const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
+    config.obs.url = `ws://127.0.0.1:${port}`
+    config.obs.password = 'неважно какой'
+    config.terminal.logsDirOverride = path.join(tmpHome, 'журнала-тут-нет')
+
+    const appCore = createApp({ config, log: () => {} })
+
+    const startedAt = Date.now()
+    await appCore.start()
+    const elapsed = Date.now() - startedAt
+    await appCore.stop()
+
+    assert.ok(elapsed < 5000,
+      `start() обязан вернуться, не дожидаясь OBS, а занял ${elapsed}мс ` +
+      '(срок ожидания подключения — 10с, значит его снова ждут)')
+  } finally {
+    for (const socket of sockets) socket.destroy()
+    await new Promise((resolve) => server.close(resolve))
+    process.env.LOCALAPPDATA = previousLocalAppData
+    fs.rmSync(tmpHome, { recursive: true, force: true })
+  }
+
+  console.log('[OK] testStartDoesNotWaitForObs')
+}
+
 // Молчащий OBS не должен вешать приложение.
 //
 // Так это и выглядело вживую: OBS принимал соединение и замолкал (он так
@@ -1333,6 +1382,7 @@ async function main() {
   testBuildDailyOutputDir()
   testGetStakanBounds()
   testBuildAtempoFilter()
+  await testStartDoesNotWaitForObs()
   await testObsConnectTimesOut()
   await testObsFailuresAreNotRepeatedInLog()
   await testCheckTerminalLogs()

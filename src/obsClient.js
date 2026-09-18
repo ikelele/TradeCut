@@ -50,6 +50,7 @@ function createObsClient({ url, password, onStatus, onStatusChange, connectTimeo
   let stopped = false
   let lastFailureMessage = null
   let repeatedFailures = 0
+  let consecutiveFailures = 0
   // Сроки задаются параметрами только ради тестов — в приложении используются
   // значения по умолчанию.
   const RECONNECT_DELAY_MS = reconnectDelayMs || 5000
@@ -57,6 +58,9 @@ function createObsClient({ url, password, onStatus, onStatusChange, connectTimeo
   // безобидны: OBS начинает отбиваться от них и рвать соединение, после чего
   // очередная попытка подвисает на рукопожатии. Ждём заметно дольше.
   const AUTH_RETRY_DELAY_MS = RECONNECT_DELAY_MS * 6
+  // Верхняя граница растущей паузы. Молчащий OBS от частых попыток не
+  // оживает — зато на его стороне копятся недозакрытые соединения.
+  const MAX_RECONNECT_DELAY_MS = RECONNECT_DELAY_MS * 6
   // У obs-websocket-js своего срока ожидания нет: он ждёт от OBS приветствие
   // и подтверждение личности сколько угодно. Если OBS принял соединение и
   // замолчал, промис не завершится никогда — а вместе с ним встаёт всё, что
@@ -88,6 +92,15 @@ function createObsClient({ url, password, onStatus, onStatusChange, connectTimeo
   function isAuthFailure(error) {
     if (error && error.code === 4009) return true
     return /authentication/i.test(String((error && error.message) || ''))
+  }
+
+  // Пауза до следующей попытки. Неверный пароль сам не исправится — ждём
+  // заметно дольше. В остальных случаях пауза растёт с каждой неудачей подряд:
+  // если OBS не отвечает, частые попытки ничего не ускоряют, а недозакрытые
+  // соединения на его стороне копятся.
+  function reconnectDelayFor(error) {
+    if (isAuthFailure(error)) return AUTH_RETRY_DELAY_MS
+    return Math.min(RECONNECT_DELAY_MS * consecutiveFailures, MAX_RECONNECT_DELAY_MS)
   }
 
   const emitStateChange = (state) => {
@@ -158,12 +171,14 @@ function createObsClient({ url, password, onStatus, onStatusChange, connectTimeo
         connected = true
         lastFailureMessage = null
         repeatedFailures = 0
+        consecutiveFailures = 0
         emitStatus(`Подключено к OBS WebSocket: ${url}`)
         emitStateChange('connected')
       })
       .catch((error) => {
+        consecutiveFailures++
         reportFailure(error.message)
-        scheduleReconnect(isAuthFailure(error) ? AUTH_RETRY_DELAY_MS : RECONNECT_DELAY_MS)
+        scheduleReconnect(reconnectDelayFor(error))
         throw error
       })
       .finally(() => {
