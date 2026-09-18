@@ -124,6 +124,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('crop:guided', () => false)
   // Помощник сохраняет настройки на каждом переходе между шагами
   ipcMain.handle('config:save', (_event, incoming) => incoming)
+  // Последний шаг помощника зовёт окно настроек — в тесте открывать его не надо
+  ipcMain.on('settings:open', () => {})
 
   const settings = await openPage('settings.html')
   await check(settings, 'settings.html', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
@@ -246,7 +248,7 @@ app.whenReady().then(async () => {
          steps: banner ? banner.querySelectorAll('li').length : 0,
          wired: typeof window.api.isGuidedCrop === 'function'
        }
-     })()`, (v) => v && v.exists === true && v.hidden === true && v.steps === 4 && v.wired === true)
+     })()`, (v) => v && v.exists === true && v.hidden === true && v.steps === 5 && v.wired === true)
   await check(crop, 'crop.html', 'getPathForFile проброшен в окно',
     'typeof window.api.getPathForFile', (v) => v === 'function')
 
@@ -461,14 +463,14 @@ app.whenReady().then(async () => {
   // шаги перестают переключаться, проверки показывают не тот исход, а данные
   // с предыдущего шага теряются при переходе на следующий.
   const setup = await openPage('setup.html')
-  await check(setup, 'setup.html', 'открывается на первом шаге из трёх', `
+  await check(setup, 'setup.html', 'открывается на первом шаге из четырёх', `
     (() => ({
       counter: document.getElementById('step-counter').textContent,
       obsShown: !document.getElementById('step-obs').hidden,
       terminalShown: !document.getElementById('step-terminal').hidden,
       backHidden: document.getElementById('back').hidden
     }))()
-  `, (v) => v && /1 из 3/.test(v.counter || '') && v.obsShown === true
+  `, (v) => v && /1 из 4/.test(v.counter || '') && v.obsShown === true
        && v.terminalShown === false && v.backHidden === true)
 
   await check(setup, 'setup.html', 'поля OBS заполнены из конфига',
@@ -510,7 +512,7 @@ app.whenReady().then(async () => {
         backShown: !document.getElementById('back').hidden
       }
     })()
-  `, (v) => v && /2 из 3/.test(v.counter || '') && v.terminalShown === true && v.backShown === true)
+  `, (v) => v && /2 из 4/.test(v.counter || '') && v.terminalShown === true && v.backShown === true)
 
   await check(setup, 'setup.html', 'есть выбор терминала и проверка журнала показывает папку', `
     (async () => {
@@ -523,7 +525,7 @@ app.whenReady().then(async () => {
   `, (v) => v && v.options.includes('Vataga') && v.options.includes('TigerTrade')
        && /ok/.test(v.cls) && /Logs/.test(v.text) && /последняя запись/.test(v.text))
 
-  await check(setup, 'setup.html', 'на третьем шаге кнопка становится «Готово», а «Пропустить» уходит', `
+  await check(setup, 'setup.html', 'третий шаг — области кадра, и он ещё не последний', `
     (async () => {
       document.getElementById('next').click()
       await new Promise((resolve) => setTimeout(resolve, 300))
@@ -534,17 +536,39 @@ app.whenReady().then(async () => {
         skipHidden: document.getElementById('skip').hidden
       }
     })()
-  `, (v) => v && /3 из 3/.test(v.counter || '') && v.areasShown === true
-       && v.nextLabel === 'Готово' && v.skipHidden === true)
+  `, (v) => v && /3 из 4/.test(v.counter || '') && v.areasShown === true
+       && v.nextLabel === 'Дальше' && v.skipHidden === false)
 
-  await check(setup, 'setup.html', 'сохранение повтора отчитывается об успехе', `
+  await check(setup, 'setup.html', 'сохранение повтора отчитывается об успехе и зовёт обратно', `
     (async () => {
       document.getElementById('save-replay').click()
       await new Promise((resolve) => setTimeout(resolve, 300))
       const status = document.getElementById('areas-status')
       return { cls: status.className, text: status.textContent }
     })()
-  `, (v) => v && /ok/.test(v.cls) && /окно разметки/.test(v.text))
+  `, (v) => v && /ok/.test(v.cls) && /окно разметки/.test(v.text) && /последний шаг/.test(v.text))
+
+  // Последний шаг отправляет в настройки: всё остальное живёт со значениями по
+  // умолчанию, но один раз посмотреть на них стоит.
+  await check(setup, 'setup.html', 'четвёртый шаг открывает настройки и заканчивает помощника', `
+    (async () => {
+      document.getElementById('next').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const before = {
+        counter: document.getElementById('step-counter').textContent,
+        settingsShown: !document.getElementById('step-settings').hidden,
+        nextLabel: document.getElementById('next').textContent,
+        skipHidden: document.getElementById('skip').hidden,
+        wired: typeof window.api.openSettings === 'function'
+      }
+      document.getElementById('open-settings').click()
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const status = document.getElementById('settings-status')
+      return { ...before, statusCls: status.className, statusText: status.textContent }
+    })()
+  `, (v) => v && /4 из 4/.test(v.counter || '') && v.settingsShown === true
+       && v.nextLabel === 'Готово' && v.skipHidden === true && v.wired === true
+       && /ok/.test(v.statusCls) && /закончил/.test(v.statusText))
 
   const trades = await openPage('trades.html')
   await check(trades, 'trades.html', 'список сделок отрисован',

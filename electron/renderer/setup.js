@@ -8,7 +8,7 @@
 // целиком: saveConfig накладывает присланное на умолчания, а не на то, что
 // лежит на диске, — частичное сохранение сбросило бы всё, чего тут нет.
 
-const STEPS = ['step-obs', 'step-terminal', 'step-areas']
+const STEPS = ['step-obs', 'step-terminal', 'step-areas', 'step-settings']
 
 const TERMINALS = [
   { id: 'vataga', label: 'Vataga' },
@@ -25,6 +25,7 @@ const obsPasswordEl = document.getElementById('obs-password')
 const obsStatusEl = document.getElementById('obs-status')
 const terminalStatusEl = document.getElementById('terminal-status')
 const areasStatusEl = document.getElementById('areas-status')
+const settingsStatusEl = document.getElementById('settings-status')
 
 let config = null
 let stepIndex = 0
@@ -80,7 +81,7 @@ async function persistCurrentStep() {
 
 // Статус текущего шага — чтобы сообщать об ошибке сохранения там, где человек
 // сейчас смотрит, а не в консоли, которой у трей-приложения всё равно нет.
-const STEP_STATUS = [obsStatusEl, terminalStatusEl, areasStatusEl]
+const STEP_STATUS = [obsStatusEl, terminalStatusEl, areasStatusEl, settingsStatusEl]
 
 nextButton.addEventListener('click', async () => {
   nextButton.disabled = true
@@ -238,13 +239,22 @@ document.getElementById('save-replay').addEventListener('click', async () => {
     }
 
     setStatus(areasStatusEl,
-      'Повтор сохранён, окно разметки открыто — дальше подсказка в нём. Это окно можно закрывать.',
+      'Повтор сохранён, окно разметки открыто — дальше подсказка в нём. Как закончишь, вернись сюда: остался последний шаг.',
       'ok')
   } catch (error) {
     setStatus(areasStatusEl, `Не получилось: ${error.message}`, 'error')
   } finally {
     button.disabled = false
   }
+})
+
+// ── Шаг 4: остальные настройки ────────────────────────────────────────────
+
+document.getElementById('open-settings').addEventListener('click', () => {
+  window.api.openSettings()
+  // Окно настроек открывается поверх, и помощник за ним теряется. Говорим
+  // прямо, что здесь всё — иначе человек возвращается сюда искать, что дальше.
+  setStatus(settingsStatusEl, 'Настройки открыты. Помощник тут закончил — можно закрывать.', 'ok')
 })
 
 // ── Старт ─────────────────────────────────────────────────────────────────

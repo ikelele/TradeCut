@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   openCropWindow: () => ipcRenderer.send('crop:open'),
   openHelp: () => ipcRenderer.send('help:open'),
   openSetup: () => ipcRenderer.send('setup:open'),
+  openSettings: () => ipcRenderer.send('settings:open'),
 
   // Помощник первой настройки проверяет то, что ввели, ещё до сохранения:
   // иначе "почему не работает" выясняется молча и сильно позже.

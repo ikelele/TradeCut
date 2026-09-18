@@ -243,6 +243,10 @@ function main() {
 
     ipcMain.on('setup:open', () => openSetupWindow())
 
+    // Последний шаг помощника отправляет сюда: всё остальное живёт со
+    // значениями по умолчанию, но взглянуть на них один раз стоит.
+    ipcMain.on('settings:open', () => openSettingsWindow())
+
     ipcMain.handle('dialog:pick-video', async (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       const result = await dialog.showOpenDialog(win, {
