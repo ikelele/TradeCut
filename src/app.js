@@ -5,6 +5,7 @@ const { createObsClient } = require('./obsClient')
 const { createClipFromReplay, createEntryCheckpoint, createMergedClipFromReplay, createManualReplayClip, probeDurationSeconds, checkFfmpegToolsAvailable } = require('./clipper')
 const { createTradeBatcher } = require('./tradeBatcher')
 const { cropClipToStakan } = require('./stakanCrop')
+const { detectTradeArea } = require('./tradeAreaDetect')
 const { resolveMediaPath, getUserDataDir } = require('./appPaths')
 
 function sleep(ms) {
@@ -187,24 +188,38 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
 
   // Автоматическая обрезка по области — сразу после того, как клип готов.
   //
-  // Стакан на разборе почти всегда нужен один и тот же, а резать его руками
-  // после каждой сделки — лишний ритуал. Область выбирается один раз в
-  // настройках (clip.autoCropArea), пусто — ничего не режем.
+  // Резать нужный стакан руками после каждой сделки — лишний ритуал. Область
+  // берётся одним из двух способов: программа определяет её по самому кадру
+  // (clip.autoCropDetect, см. tradeAreaDetect.js) либо берёт заданную заранее
+  // (clip.autoCropArea). Ни того, ни другого — ничего не режем.
   //
   // Идёт через ту же очередь, что и остальная обработка: ffmpeg не любит,
   // когда его запускают пачкой параллельно, а серия сделок даёт как раз пачку.
   function autoCropClip(entry) {
-    const areaName = String(config.clip.autoCropArea || '').trim()
-    if (!areaName) return
+    const fallbackName = String(config.clip.autoCropArea || '').trim()
+    const detect = Boolean(config.clip.autoCropDetect)
+    if (!detect && !fallbackName) return
 
-    const preset = (config.clip.cropPresets || []).find((item) => item.name === areaName)
-    if (!preset) {
-      log(`Область «${areaName}» для автоматической обрезки не найдена среди сохранённых — клип остаётся целым`)
-      return
-    }
+    const areas = config.clip.cropPresets || []
 
     enqueue(
       async () => {
+        // Сперва пробуем понять по самому кадру, где была сделка. Не вышло —
+        // берём заданную заранее область; нет и её — не режем вовсе. Молча
+        // вырезать наугад нельзя: это была бы чужая монета под видом твоей.
+        let areaName = detect ? await detectTradeArea(entry.clipPath, areas, log) : null
+        if (!areaName) areaName = fallbackName
+        if (!areaName) {
+          log('Область не определена и запасная не задана — клип остаётся целым')
+          return
+        }
+
+        const preset = areas.find((item) => item.name === areaName)
+        if (!preset) {
+          log(`Область «${areaName}» не найдена среди сохранённых — клип остаётся целым`)
+          return
+        }
+
         const outputPath = await cropClipToStakan(entry.clipPath, null, resolveMediaPath(config.clip.stakanOutputDir), {
           cropRect: preset,
           mute: Boolean(config.clip.trayCropMuted)
@@ -232,7 +247,7 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
         if (onStakanReady) onStakanReady(outputPath, `область «${areaName}»`, 1)
       },
       (error) => {
-        const message = `Не удалось вырезать область «${areaName}» автоматически: ${error.message}`
+        const message = `Не удалось автоматически вырезать область из ${entry.clipPath}: ${error.message}`
         log(message)
         if (onIssue) onIssue(message)
       }

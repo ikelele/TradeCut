@@ -177,6 +177,12 @@ const DEFAULT_CONFIG = {
     // Смысл настройки в том, что стакан на разборе нужен почти всегда один и
     // тот же, а резать его руками после каждой сделки — лишний ритуал.
     autoCropArea: '',
+    // Определять область по самому кадру, а не брать заданную заранее. Из
+    // журнала терминала этого не узнать (там нет ничего про экран), зато видно
+    // в записи: у панели с открытой позицией внизу горит цветная полоса.
+    // Подробности — в tradeAreaDetect.js. Если определить не вышло, режется
+    // область из autoCropArea, а если и её нет — не режется ничего.
+    autoCropDetect: 0,
     // Удалять ли клип на весь кадр после того, как область из него вырезана.
     // По умолчанию НЕТ: область можно настроить неудачно, и запись, которой
     // уже нет, обратно не вернуть. Включать это стоит, когда область проверена
@@ -306,6 +312,7 @@ function saveConfig(incoming) {
       speedPresets: normalizeNumberList(merged.clip.speedPresets, DEFAULT_CONFIG.clip.speedPresets, { min: 0.25, max: 20, round: false }),
       trayCropMuted: flag(merged.clip.trayCropMuted),
       autoCropArea: String(merged.clip.autoCropArea || '').trim(),
+      autoCropDetect: flag(merged.clip.autoCropDetect),
       autoCropDeleteFull: flag(merged.clip.autoCropDeleteFull),
       stakanCount: Math.max(0, Math.min(24, Math.round(num(merged.clip.stakanCount, DEFAULT_CONFIG.clip.stakanCount)))),
       // Настроенные области переживают сохранение из окна настроек, даже если

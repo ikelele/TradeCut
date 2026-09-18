@@ -22,6 +22,7 @@ const FIELDS = [
   { id: 'tray-crop-muted', path: ['clip', 'trayCropMuted'], type: 'checkbox' },
   // Выпадающий список ведёт себя как обычное поле: и читается, и пишется
   // через .value, поэтому отдельный тип ему не нужен.
+  { id: 'auto-crop-detect', path: ['clip', 'autoCropDetect'], type: 'checkbox' },
   { id: 'auto-crop-area', path: ['clip', 'autoCropArea'], type: 'text' },
   { id: 'auto-crop-delete-full', path: ['clip', 'autoCropDeleteFull'], type: 'checkbox' },
   // Пустое поле здесь осмысленно: "не делить кадр вовсе". Обычный number

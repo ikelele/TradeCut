@@ -198,10 +198,15 @@ app.whenReady().then(async () => {
     `(() => {
        document.getElementById('auto-crop-area').value = 'Левый стакан'
        document.getElementById('auto-crop-delete-full').checked = true
+       document.getElementById('auto-crop-detect').checked = true
        const collected = collectForm()
-       return { area: collected.clip.autoCropArea, deleteFull: collected.clip.autoCropDeleteFull }
+       return {
+         area: collected.clip.autoCropArea,
+         deleteFull: collected.clip.autoCropDeleteFull,
+         detect: collected.clip.autoCropDetect
+       }
      })()`,
-    (v) => v && v.area === 'Левый стакан' && v.deleteFull === true)
+    (v) => v && v.area === 'Левый стакан' && v.deleteFull === true && v.detect === true)
 
   await check(settings, 'settings.html', 'из настроек можно открыть окно настройки областей',
     'typeof window.api.openCropWindow === "function" && !!document.getElementById("open-crop")', (v) => v === true)

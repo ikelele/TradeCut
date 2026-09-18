@@ -978,6 +978,95 @@ async function testMergedPartsDeletedByDefault() {
   console.log('[OK] testMergedPartsDeletedByDefault')
 }
 
+// Определение области, в которой шла сделка.
+//
+// Кадр рисуем сами: серый интерфейс во всю площадь и цветная полоса внизу
+// одной из колонок — ровно так выглядит панель с открытой позицией.
+function makeFrame(width, height, vividColumns) {
+  const data = new Uint8Array(width * height * 4)
+  // Серый фон: каналы близки друг к другу, насыщенным такое не считается
+  for (let i = 0; i < width * height; i++) {
+    data[i * 4] = 60
+    data[i * 4 + 1] = 62
+    data[i * 4 + 2] = 66
+    data[i * 4 + 3] = 255
+  }
+
+  const columnWidth = Math.floor(width / 6)
+  for (const { index, fromRatio } of vividColumns) {
+    const stripTop = Math.round(height * fromRatio)
+    for (let y = stripTop; y < height; y++) {
+      for (let x = index * columnWidth; x < (index + 1) * columnWidth; x++) {
+        const i = (y * width + x) * 4
+        data[i] = 200 // насыщенно-красная плашка
+        data[i + 1] = 50
+        data[i + 2] = 50
+      }
+    }
+  }
+  return { width, height, data }
+}
+
+function makeAreas(width, height) {
+  const columnWidth = Math.floor(width / 6)
+  return Array.from({ length: 6 }, (_, k) => ({
+    name: `Стакан ${k + 1}`,
+    x: k * columnWidth,
+    y: 0,
+    width: columnWidth,
+    height,
+    sourceWidth: width,
+    sourceHeight: height
+  }))
+}
+
+function testDetectAreaInFrame() {
+  const { detectAreaInFrame, pickAreaByVotes } = require('../src/tradeAreaDetect')
+  const width = 1200
+  const height = 600
+  const areas = makeAreas(width, height)
+
+  // Полоса в четвёртой колонке — её и должно найти, уверенно.
+  const one = detectAreaInFrame(makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }]), areas)
+  assert.strictEqual(one.name, 'Стакан 4')
+  assert.strictEqual(one.confident, true, `должно быть уверенно, а вышло ${JSON.stringify(one)}`)
+
+  // Две открытые позиции — две полосы. Выбирать между ними нельзя: тикер мы не
+  // читаем, а вырезать чужую монету под видом своей хуже, чем не вырезать.
+  const two = detectAreaInFrame(
+    makeFrame(width, height, [{ index: 1, fromRatio: 0.96 }, { index: 4, fromRatio: 0.96 }]),
+    areas
+  )
+  assert.strictEqual(two.confident, false, 'при двух одинаковых полосах уверенности быть не должно')
+
+  // Полос нет вовсе — тоже честное "не знаю", а не случайная колонка.
+  const none = detectAreaInFrame(makeFrame(width, height, []), areas)
+  assert.strictEqual(none.confident, false, 'без цветных полос уверенности быть не должно')
+
+  // Одна область — сравнивать не с чем, и "определение" было бы самообманом
+  assert.strictEqual(detectAreaInFrame(makeFrame(width, height, []), areas.slice(0, 1)), null)
+
+  console.log('[OK] testDetectAreaInFrame')
+}
+
+// Голосование по нескольким кадрам: один кадр мог попасть на моргание.
+function testPickAreaByVotes() {
+  const { pickAreaByVotes } = require('../src/tradeAreaDetect')
+
+  const sure = (name) => ({ name, confident: true, score: 0.2, runnerUp: 0.01 })
+  const unsure = (name) => ({ name, confident: false, score: 0.01, runnerUp: 0.01 })
+
+  assert.strictEqual(pickAreaByVotes([sure('Стакан 2'), sure('Стакан 2'), unsure('Стакан 5')]), 'Стакан 2',
+    'два уверенных голоса из трёх — этого достаточно')
+  assert.strictEqual(pickAreaByVotes([unsure('Стакан 1'), null, unsure('Стакан 3')]), null,
+    'без единого уверенного голоса ответа быть не должно')
+  assert.strictEqual(pickAreaByVotes([sure('Стакан 1'), sure('Стакан 4')]), null,
+    'ничья между разными областями — это тот самый случай, когда угадывать нельзя')
+  assert.strictEqual(pickAreaByVotes([]), null)
+
+  console.log('[OK] testPickAreaByVotes')
+}
+
 // Область, вырезанная автоматически, не должна пережить свой клип.
 //
 // Иначе от серии из трёх сделок остаётся один общий клип — и три области от
@@ -1466,6 +1555,8 @@ async function main() {
   await testCropClipWithoutStakanKeepsFullFrame()
   await testCropClipMuteDropsAudio()
   await testMergedPartsDeletedByDefault()
+  testDetectAreaInFrame()
+  testPickAreaByVotes()
   await testAutoCropsDieWithTheirClips()
   await testMergedPartsSurviveAlreadyDeletedClips()
   await testMergedPartsMovedWhenKept()
