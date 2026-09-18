@@ -7,7 +7,7 @@ const { createUpdater } = require('./updater')
 const { createTray } = require('./tray')
 const { createNotifier } = require('./notifier')
 const autostart = require('./autostart')
-const { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
+const { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
 
 const APP_USER_MODEL_ID = 'com.tradecut.app'
 
@@ -169,7 +169,19 @@ function main() {
 
     // Проверка обновлений идёт последней и в фоне: она не должна задерживать
     // запуск слежения за сделками.
-    updater = createUpdater({ installKind: getInstallKind(), log })
+    updater = createUpdater({
+      installKind: getInstallKind(),
+      log,
+      // Ход загрузки — в окно настроек, если оно открыто. Больше ста мегабайт
+      // без единого признака жизни выглядят как зависшая программа.
+      onEvent: (event) => {
+        const win = getSettingsWindow()
+        if (win) win.webContents.send('updates:progress', event)
+        if (event.stage === 'downloaded' && notifier) {
+          notifier.notifyIssue(`Обновление ${event.version} загружено — установится при перезапуске`)
+        }
+      }
+    })
     updater.start()
   }).catch((error) => {
     const message = `Фатальная ошибка при запуске: ${error.stack || error.message}`

@@ -23,10 +23,17 @@ const CHECK_DELAY_MS = 8000
 // В системном окне простыня всё равно не поместится.
 const MAX_NOTES_LENGTH = 700
 
-function createUpdater({ installKind, log }) {
+function createUpdater({ installKind, log, onEvent }) {
   let timer = null
   let updater = null
   let checking = false
+
+  // Ход загрузки уходит наружу событиями: окно настроек показывает их у себя,
+  // если открыто. Скачать надо больше ста мегабайт, и молчание всё это время
+  // неотличимо от «нажал, и ничего не произошло».
+  const emit = (event) => {
+    if (onEvent) onEvent(event)
+  }
 
   // Настройки и подписки ставим ОДИН раз на всё время работы.
   //
@@ -42,11 +49,20 @@ function createUpdater({ installKind, log }) {
     updater.autoInstallOnAppQuit = true
     updater.logger = { info: log, warn: log, error: log, debug: () => {} }
     updater.on('update-downloaded', onUpdateDownloaded)
+    updater.on('download-progress', (progress) => {
+      emit({
+        stage: 'downloading',
+        percent: Math.round(progress.percent),
+        transferred: progress.transferred,
+        total: progress.total
+      })
+    })
     return updater
   }
 
   async function onUpdateDownloaded(info) {
     log(`Версия ${info.version} загружена`)
+    emit({ stage: 'downloaded', version: info.version })
     const answer = await dialog.showMessageBox({
       type: 'info',
       title: 'Обновление готово',
@@ -97,10 +113,19 @@ function createUpdater({ installKind, log }) {
       defaultId: 0,
       cancelId: 1
     })
-    if (answer.response === 0) {
-      log('Скачиваю обновление...')
-      await getUpdater().downloadUpdate()
-    }
+    if (answer.response !== 0) return 'declined'
+
+    log(`Скачиваю обновление ${version}...`)
+    emit({ stage: 'downloading', percent: 0, transferred: 0, total: 0 })
+    // Загрузку НЕ ждём. Это больше ста мегабайт и минуты времени, а вызов
+    // пришёл из окна настроек: дождись мы её здесь — кнопка «Проверить
+    // обновления» всё это время оставалась бы нажатой и мёртвой. Ход загрузки
+    // видно по событиям, а конец покажет своё окно.
+    getUpdater().downloadUpdate().catch((error) => {
+      log(`Не удалось скачать обновление: ${error.message}`)
+      emit({ stage: 'error', message: error.message })
+    })
+    return 'downloading'
   }
 
   // Возвращает то, что можно показать человеку: одна из причин, по которой
@@ -124,9 +149,12 @@ function createUpdater({ installKind, log }) {
       }
 
       log(`Вышла версия ${version} (сейчас ${current})`)
-      if (installKind === 'portable') await offerPortable(result.updateInfo, version)
-      else await offerInstalled(result.updateInfo, version)
-      return { state: 'available', current, version }
+      if (installKind === 'portable') {
+        await offerPortable(result.updateInfo, version)
+        return { state: 'available', current, version, download: 'portable' }
+      }
+      const download = await offerInstalled(result.updateInfo, version)
+      return { state: 'available', current, version, download }
     } catch (error) {
       log(`Не удалось проверить обновления: ${error.message}`)
       return { state: 'error', current, error: error.message }

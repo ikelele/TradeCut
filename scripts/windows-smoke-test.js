@@ -205,6 +205,30 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v === true)
 
+  // Загрузка идёт минутами и без единого признака жизни выглядит как зависшая
+  // программа. Шлём события тем же каналом, которым их шлёт основной процесс —
+  // так проверяется и проброс через preload, а не только разбор в окне.
+  const sendProgress = async (event) => {
+    settings.webContents.send('updates:progress', event)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+
+  await sendProgress({ stage: 'downloading', percent: 42, transferred: 57 * 1024 * 1024, total: 136 * 1024 * 1024 })
+  await check(settings, 'settings.html', 'ход загрузки обновления виден в окне',
+    `(() => {
+       const el = document.getElementById('update-status')
+       return { cls: el.className, text: el.textContent }
+     })()`,
+    (v) => v && /42%/.test(v.text) && /57 из 136 МБ/.test(v.text))
+
+  await sendProgress({ stage: 'downloaded', version: '9.9.10' })
+  await check(settings, 'settings.html', 'после загрузки сказано, что ставить будет при перезапуске',
+    `(() => {
+       const el = document.getElementById('update-status')
+       return { cls: el.className, text: el.textContent }
+     })()`,
+    (v) => v && /ok/.test(v.cls) && /9\.9\.10 загружена/.test(v.text) && /перезапуске/.test(v.text))
+
   await check(settings, 'settings.html', 'версия программы показана в настройках',
     'document.getElementById("app-version").textContent',
     (v) => typeof v === 'string' && v.includes('9.9.9') && v.includes('установленная'))

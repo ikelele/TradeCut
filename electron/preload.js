@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('api', {
 
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  onUpdateProgress: (listener) => {
+    const handler = (_event, progress) => listener(progress)
+    ipcRenderer.on('updates:progress', handler)
+    return () => ipcRenderer.off('updates:progress', handler)
+  },
 
   // Помощник первой настройки проверяет то, что ввели, ещё до сохранения:
   // иначе "почему не работает" выясняется молча и сильно позже.

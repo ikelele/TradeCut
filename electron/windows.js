@@ -134,6 +134,11 @@ function getTradesWindow() {
   return tradesWindow && !tradesWindow.isDestroyed() ? tradesWindow : null
 }
 
+// Окну настроек шлётся ход загрузки обновления — если оно открыто.
+function getSettingsWindow() {
+  return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
+}
+
 // Окно ручной обрезки. Может открываться как с уже известным файлом (его
 // перетащили на .exe), так и пустым — тогда файл выбирается в самом окне
 // (перетаскиванием или кнопкой). Их может быть несколько одновременно.
@@ -199,4 +204,4 @@ function openSettingsWindow() {
   return settingsWindow
 }
 
-module.exports = { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, openHelpWindow, openSetupWindow }
+module.exports = { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow }

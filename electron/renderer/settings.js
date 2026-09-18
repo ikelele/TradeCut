@@ -239,6 +239,8 @@ function describeUpdateResult(result) {
     case 'none':
       return { text: `У тебя последняя версия — ${result.current}.`, kind: 'ok' }
     case 'available':
+      if (result.download === 'downloading') return { text: `Скачиваю версию ${result.version}...`, kind: '' }
+      if (result.download === 'declined') return { text: `Вышла версия ${result.version}. Обновиться можно в любой момент этой же кнопкой.`, kind: 'ok' }
       return { text: `Вышла версия ${result.version}. Что делать дальше — в открывшемся окне.`, kind: 'ok' }
     case 'dev':
       return { text: 'Это сборка для разработки: обновляться ей не из чего.', kind: '' }
@@ -255,6 +257,25 @@ function describeUpdateResult(result) {
       return { text: `Непонятный ответ проверки: ${result.state}`, kind: 'error' }
   }
 }
+
+// Пока идёт загрузка, итог проверки перебивается ходом загрузки: скачать надо
+// больше ста мегабайт, и это единственное, что сейчас происходит.
+window.api.onUpdateProgress((progress) => {
+  if (progress.stage === 'downloading') {
+    const total = progress.total || 0
+    const done = progress.transferred || 0
+    const size = total ? ` — ${(done / 1024 / 1024).toFixed(0)} из ${(total / 1024 / 1024).toFixed(0)} МБ` : ''
+    setUpdateStatus(`Скачиваю обновление: ${progress.percent || 0}%${size}`, '')
+    return
+  }
+  if (progress.stage === 'downloaded') {
+    setUpdateStatus(`Версия ${progress.version} загружена — установится при перезапуске программы.`, 'ok')
+    return
+  }
+  if (progress.stage === 'error') {
+    setUpdateStatus(`Не удалось скачать обновление: ${progress.message}`, 'error')
+  }
+})
 
 checkUpdatesButton.addEventListener('click', async () => {
   checkUpdatesButton.disabled = true
