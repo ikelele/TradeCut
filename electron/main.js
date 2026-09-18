@@ -430,6 +430,7 @@ function main() {
     setWindowsLogger(log)
     require('../src/clipper').setClipperLogger(log)
     autostart.migrateLegacyAutostart(log)
+    autostart.repointAutostartIfMoved(APP_USER_MODEL_ID, log)
     logRenderingDiagnostics()
 
     let restarting = false

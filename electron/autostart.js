@@ -57,6 +57,36 @@ function migrateLegacyAutostart(log = () => {}) {
   }
 }
 
+// Переезд с переносимой версии на установленную.
+//
+// Запись автозапуска называется одинаково у обеих, но путь в ней — до того
+// .exe, который её включил. После установки она продолжает указывать на старый
+// переносимый файл: Windows поднимает прежнюю сборку, а когда её папку удалят
+// — тихо перестаёт поднимать что-либо вообще. Заметить это можно только на
+// следующем входе в систему, поэтому чиним сами.
+//
+// Трогаем только запись с нашим именем и только когда она уже есть: включать
+// автозапуск за человека, который его не включал, мы не собираемся.
+function repointAutostartIfMoved(runName, log = () => {}) {
+  if (process.platform !== 'win32' || !isAvailable()) return
+  // Путь совпадает с текущим — Electron ответит true, и делать нечего.
+  if (isEnabled()) return
+
+  const { execFileSync } = require('child_process')
+  try {
+    execFileSync('reg', ['query', RUN_KEY, '/v', runName], { stdio: 'ignore' })
+  } catch {
+    return // автозапуск не включён вовсе — так и оставляем
+  }
+
+  try {
+    setEnabled(true)
+    log(`Автозапуск указывал на другой файл программы — переписан на ${getLauncherPath()}`)
+  } catch (error) {
+    log(`Не удалось обновить путь в автозапуске: ${error.message}`)
+  }
+}
+
 function setEnabled(enabled) {
   app.setLoginItemSettings({
     openAtLogin: Boolean(enabled),
@@ -66,4 +96,4 @@ function setEnabled(enabled) {
   })
 }
 
-module.exports = { migrateLegacyAutostart, isAvailable, isEnabled, setEnabled, getLauncherPath }
+module.exports = { migrateLegacyAutostart, repointAutostartIfMoved, isAvailable, isEnabled, setEnabled, getLauncherPath }
