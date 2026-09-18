@@ -450,7 +450,7 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
       await obsClient.connect()
     } catch (error) {
       log(`Не удалось подключиться к OBS: ${error.message}`)
-      log('Проверь: OBS запущен, WebSocket Server включён (Tools -> WebSocket Server Settings), пароль в config.json верный.')
+      log('Проверь: OBS запущен, сервер WebSocket включён (Сервис → Настройки сервера WebSocket), пароль в config.json верный.')
       // Дальше не бросаем и не завершаем процесс — obsClient сам продолжит
       // попытки переподключения в фоне, статус в трее отразит это состояние.
     }

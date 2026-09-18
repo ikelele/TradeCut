@@ -206,6 +206,76 @@ function testTerminalAdapters() {
   console.log('[OK] testTerminalAdapters')
 }
 
+// Молчащий OBS не должен вешать приложение.
+//
+// Так это и выглядело вживую: OBS принимал соединение и замолкал (он так
+// отбивается от частых попыток с неверным паролем), obs-websocket-js ждал
+// рукопожатия без всякого срока, вместе с ним навсегда вставал start(), а с
+// ним — и окно, которое ждало ответа на сохранение настроек.
+async function testObsConnectTimesOut() {
+  const net = require('net')
+  const { createObsClient } = require('../src/obsClient')
+
+  // Принимаем соединение и не говорим ни слова — ровно то поведение.
+  // Сокеты держим сами: server.close() ждёт закрытия всех соединений, а наше
+  // как раз повисло — иначе тест не завершился бы.
+  const sockets = []
+  const server = net.createServer((socket) => sockets.push(socket))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address()
+
+  const statuses = []
+  const client = createObsClient({
+    url: `ws://127.0.0.1:${port}`,
+    password: 'всё равно какой',
+    onStatus: (message) => statuses.push(message),
+    connectTimeoutMs: 300,
+    reconnectDelayMs: 100
+  })
+
+  const startedAt = Date.now()
+  await assert.rejects(
+    () => client.connect(),
+    /не ответил/,
+    'подключение к молчащему OBS обязано завершиться отказом, а не ждать вечно'
+  )
+  const elapsed = Date.now() - startedAt
+  assert.ok(elapsed < 3000, `отказ должен прийти по сроку ожидания, а пришёл через ${elapsed}мс`)
+  assert.ok(statuses.some((message) => /Не удалось подключиться/.test(message)), 'о неудаче должно быть сказано')
+
+  await client.disconnect()
+  for (const socket of sockets) socket.destroy()
+  await new Promise((resolve) => server.close(resolve))
+  console.log('[OK] testObsConnectTimesOut')
+}
+
+// Причина неудачи повторяется каждые несколько секунд часами — полным текстом
+// её надо писать при смене, иначе в журнале не останется ничего другого.
+function testObsFailuresAreNotRepeatedInLog() {
+  const { createObsClient } = require('../src/obsClient')
+  const statuses = []
+  // Нам нужен только разбор повторов, поэтому дёргаем его через сам клиент:
+  // адрес заведомо нерабочий, подключений не будет.
+  const client = createObsClient({
+    url: 'ws://127.0.0.1:1',
+    onStatus: (message) => statuses.push(message),
+    connectTimeoutMs: 50,
+    reconnectDelayMs: 100000 // не даём переподключаться во время проверки
+  })
+
+  return (async () => {
+    for (let i = 0; i < 3; i++) {
+      await client.connect().catch(() => {})
+    }
+    const failures = statuses.filter((message) => /Не удалось подключиться/.test(message))
+    assert.strictEqual(failures.length, 1,
+      `одинаковая причина должна писаться один раз, а написана ${failures.length}: ${failures.join(' | ')}`)
+
+    await client.disconnect()
+    console.log('[OK] testObsFailuresAreNotRepeatedInLog')
+  })()
+}
+
 // Проверка журнала из помощника первой настройки. Она должна отвечать честно
 // в обе стороны: нашла — сколько файлов и когда была последняя запись, не
 // нашла — какую именно папку смотрела. Молчаливое "ничего не найдено" здесь
@@ -1263,6 +1333,8 @@ async function main() {
   testBuildDailyOutputDir()
   testGetStakanBounds()
   testBuildAtempoFilter()
+  await testObsConnectTimesOut()
+  await testObsFailuresAreNotRepeatedInLog()
   await testCheckTerminalLogs()
   await testTerminalWatcherStateMachine()
   await testBatcherWaitsForOpenPosition()

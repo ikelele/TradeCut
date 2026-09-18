@@ -194,7 +194,7 @@ function ensureConfigExists() {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8')
     configCreatedOnThisRun = true
     console.log(`[config] Создан config.json со значениями по умолчанию: ${CONFIG_PATH}`)
-    console.log('[config] Открой его и укажи пароль OBS WebSocket (Tools -> WebSocket Server Settings).')
+    console.log('[config] Открой его и укажи пароль OBS WebSocket (Сервис → Настройки сервера WebSocket).')
   }
 }
 

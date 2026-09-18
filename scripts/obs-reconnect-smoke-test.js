@@ -1,6 +1,6 @@
 // Ручная проверка src/obsClient.js: подключение + автопереподключение.
 // Запустить: node scripts/obs-reconnect-smoke-test.js
-// Пока скрипт работает — выключи/включи WebSocket Server в OBS (Tools ->
+// Пока скрипт работает — выключи/включи WebSocket Server в OBS (Сервис →
 // WebSocket Server Settings) или сам OBS, и посмотри, что client сам
 // восстановит соединение без падения процесса.
 

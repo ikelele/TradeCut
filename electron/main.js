@@ -164,6 +164,25 @@ function main() {
     app.exit(1)
   })
 
+  // Перезапуски слежения выстраиваем в цепочку: два сохранения подряд (а в
+  // помощнике настройки это обычное дело — шаг за шагом) иначе полезли бы
+  // останавливать и поднимать слежение одновременно.
+  let restartChain = Promise.resolve()
+
+  function restartWatchingInBackground() {
+    restartChain = restartChain.then(async () => {
+      log('Перезапускаю слежение, чтобы применить настройки...')
+      await appCore.stop()
+      await appCore.start()
+      log('Настройки применены')
+    }).catch((error) => {
+      const message = `Не удалось перезапустить слежение: ${error.message}`
+      log(message)
+      if (notifier) notifier.notifyIssue(message)
+    })
+    return restartChain
+  }
+
   function registerIpcHandlers() {
     ipcMain.handle('trades:list', () => (appCore ? appCore.getRecentClips() : []))
 
@@ -195,6 +214,11 @@ function main() {
     // моменту уже настроен предыдущими шагами и держит последние минуты экрана.
     ipcMain.handle('setup:save-replay', async () => {
       if (!appCore) return { error: 'Слежение за сделками ещё не запущено' }
+
+      // Пароль от OBS сохранён на первом шаге, и слежение от этого
+      // перезапускается в фоне. Пока перезапуск идёт, подключения к OBS нет —
+      // дожидаемся его, иначе повтор сорвался бы на ровном месте.
+      await restartChain
 
       const { clipPath, error } = await appCore.saveManualReplay(SETUP_REPLAY_SEC)
       if (error) return { error }
@@ -243,12 +267,12 @@ function main() {
 
       // Часть настроек (адрес OBS, интервалы, папка логов) читается только при
       // старте слежения — чтобы применить их, поднимаем слежение заново.
-      if (appCore) {
-        log('Перезапускаю слежение, чтобы применить настройки...')
-        await appCore.stop()
-        await appCore.start()
-        log('Настройки применены')
-      }
+      //
+      // Но ОКНО этого не ждёт. Перезапуск лезет в сеть, к OBS, и время его
+      // работы ничем сверху не ограничено; окну же нужно знать ровно одно —
+      // что настройки записаны. Когда ответ ждал перезапуска, подвисшее
+      // подключение намертво вешало и окно: кнопка гасла и не возвращалась.
+      if (appCore) restartWatchingInBackground()
       if (tray) {
         tray.setTrayHistoryLimit(config.clip.recentTradesHistorySize)
         tray.setStakanCount(config.clip.stakanCount)

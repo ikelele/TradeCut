@@ -42,16 +42,52 @@ async function checkObsConnection({ url, password, timeoutMs = 8000 }) {
   }
 }
 
-function createObsClient({ url, password, onStatus, onStatusChange }) {
+function createObsClient({ url, password, onStatus, onStatusChange, connectTimeoutMs, reconnectDelayMs }) {
   const obs = new OBSWebSocket()
   let connected = false
   let connectPromise = null
   let reconnectTimer = null
   let stopped = false
-  const RECONNECT_DELAY_MS = 5000
+  let lastFailureMessage = null
+  let repeatedFailures = 0
+  // Сроки задаются параметрами только ради тестов — в приложении используются
+  // значения по умолчанию.
+  const RECONNECT_DELAY_MS = reconnectDelayMs || 5000
+  // Неверный пароль сам собой не исправится, а попытки каждые пять секунд не
+  // безобидны: OBS начинает отбиваться от них и рвать соединение, после чего
+  // очередная попытка подвисает на рукопожатии. Ждём заметно дольше.
+  const AUTH_RETRY_DELAY_MS = RECONNECT_DELAY_MS * 6
+  // У obs-websocket-js своего срока ожидания нет: он ждёт от OBS приветствие
+  // и подтверждение личности сколько угодно. Если OBS принял соединение и
+  // замолчал, промис не завершится никогда — а вместе с ним встаёт всё, что
+  // ждёт start(), вплоть до наглухо зависшего окна настроек.
+  const CONNECT_TIMEOUT_MS = connectTimeoutMs || 10000
 
   const emitStatus = (message) => {
     if (onStatus) onStatus(message)
+  }
+
+  // Причина неудачи обычно одна и та же и повторяется каждые несколько секунд
+  // часами. Полный текст пишем при смене причины, дальше — только счёт, иначе
+  // в журнале не найти ничего, кроме неё.
+  function reportFailure(message) {
+    if (message === lastFailureMessage) {
+      repeatedFailures++
+      if (repeatedFailures % 10 === 0) {
+        emitStatus(`Не удалось подключиться к OBS (повторяется, попыток подряд: ${repeatedFailures})`)
+      }
+      return
+    }
+    lastFailureMessage = message
+    repeatedFailures = 1
+    emitStatus(`Не удалось подключиться к OBS: ${message}`)
+  }
+
+  // Пустой или неверный пароль OBS сообщает по-разному: кодом закрытия 4009
+  // либо словами про отсутствующую строку authentication.
+  function isAuthFailure(error) {
+    if (error && error.code === 4009) return true
+    return /authentication/i.test(String((error && error.message) || ''))
   }
 
   const emitStateChange = (state) => {
@@ -62,7 +98,7 @@ function createObsClient({ url, password, onStatus, onStatusChange }) {
   // осознанно не автоматизируемая вещь), но соединение WebSocket с OBS
   // переустанавливаем сами: без этого фоновое трей-приложение просто умирало
   // бы при недоступном OBS вместо того, чтобы тихо ждать/переподключаться.
-  function scheduleReconnect() {
+  function scheduleReconnect(delayMs = RECONNECT_DELAY_MS) {
     if (stopped || reconnectTimer) return
     emitStateChange('disconnected')
     reconnectTimer = setTimeout(() => {
@@ -71,7 +107,7 @@ function createObsClient({ url, password, onStatus, onStatusChange }) {
       connect().catch(() => {
         // сама connect() уже залогировала причину и перепланировала попытку
       })
-    }, RECONNECT_DELAY_MS)
+    }, delayMs)
   }
 
   obs.on('ConnectionClosed', () => {
@@ -81,20 +117,53 @@ function createObsClient({ url, password, onStatus, onStatusChange }) {
     scheduleReconnect()
   })
 
+  // Одна попытка подключения, но со сроком ожидания. Наполовину открытое
+  // соединение по истечении срока закрываем явно: иначе такие сокеты копятся
+  // с каждой попыткой, и OBS начинает отбиваться уже от их количества.
+  async function connectOnce() {
+    const attempt = obs.connect(url, password || undefined)
+    // Если раньше сработает таймаут, гонку выиграет он, а отказ этого промиса
+    // останется без обработчика — гасим его заранее.
+    attempt.catch(() => {})
+
+    let timer = null
+    const timeout = new Promise((_resolve, reject) => {
+      const waited = CONNECT_TIMEOUT_MS >= 1000
+        ? `${Math.round(CONNECT_TIMEOUT_MS / 1000)}с`
+        : `${CONNECT_TIMEOUT_MS}мс`
+      timer = setTimeout(() => reject(new Error(`OBS не ответил за ${waited}`)), CONNECT_TIMEOUT_MS)
+    })
+
+    try {
+      await Promise.race([attempt, timeout])
+    } catch (error) {
+      try {
+        await obs.disconnect()
+      } catch {
+        // закрывать было нечего — это нормально
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async function connect() {
     if (connected) return
     if (connectPromise) return connectPromise
 
     emitStateChange('connecting')
-    connectPromise = obs.connect(url, password || undefined)
+    connectPromise = connectOnce()
       .then(() => {
         connected = true
+        lastFailureMessage = null
+        repeatedFailures = 0
         emitStatus(`Подключено к OBS WebSocket: ${url}`)
         emitStateChange('connected')
       })
       .catch((error) => {
-        emitStatus(`Не удалось подключиться к OBS: ${error.message}`)
-        scheduleReconnect()
+        reportFailure(error.message)
+        scheduleReconnect(isAuthFailure(error) ? AUTH_RETRY_DELAY_MS : RECONNECT_DELAY_MS)
         throw error
       })
       .finally(() => {
