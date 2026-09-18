@@ -8,9 +8,10 @@
     "pretest": "node -e \"require('fs').mkdirSync('test-assets',{recursive:true})\" && ffmpeg -y -f lavfi -i \"testsrc=duration=10:size=320x240:rate=25\" -c:v libx264 -pix_fmt yuv420p test-assets/fake-replay.mkv",
     "test": "node scripts/wiring-audit.js && node test/run-tests.js && node scripts/settings-save-smoke-test.js && node scripts/first-run-smoke-test.js",
     "build:icons": "node scripts/generate-icons.js",
-    "package": "npm run build:icons && electron-builder --win",
+    "package": "npm run build:icons && electron-builder --win && node scripts/clean-old-builds.js",
     "test:windows": "electron scripts/windows-smoke-test.js",
-    "release": "npm run build:icons && electron-builder --win --publish always"
+    "release": "npm run build:icons && electron-builder --win --publish always && node scripts/clean-old-builds.js",
+    "clean:builds": "node scripts/clean-old-builds.js"
   },
   "keywords": [],
   "author": "",
