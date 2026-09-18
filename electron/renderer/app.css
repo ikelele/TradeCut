@@ -563,3 +563,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .guided-banner li { margin-bottom: 4px; }
 .guided-banner li:last-child { margin-bottom: 0; }
+
+/* Итог проверки обновлений живёт в подсказке под кнопкой, а не в общей строке
+   состояния окна: та занята сохранением настроек. */
+.field-hint.ok { color: var(--ok); }
+.field-hint.error { color: var(--error); }

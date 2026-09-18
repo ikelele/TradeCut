@@ -169,7 +169,7 @@ function main() {
 
     // Проверка обновлений идёт последней и в фоне: она не должна задерживать
     // запуск слежения за сделками.
-    updater = createUpdater({ installKind: getInstallKind(), log, onIssue: notifier.notifyIssue })
+    updater = createUpdater({ installKind: getInstallKind(), log })
     updater.start()
   }).catch((error) => {
     const message = `Фатальная ошибка при запуске: ${error.stack || error.message}`
@@ -246,6 +246,17 @@ function main() {
     // Последний шаг помощника отправляет сюда: всё остальное живёт со
     // значениями по умолчанию, но взглянуть на них один раз стоит.
     ipcMain.on('settings:open', () => openSettingsWindow())
+
+    ipcMain.handle('app:version', () => ({ version: app.getVersion(), installKind: getInstallKind() }))
+
+    // Проверка обновлений по кнопке. В отличие от той, что при запуске, эта
+    // отвечает всегда — окно настроек показывает итог у себя. Молчание в ответ
+    // на нажатую кнопку читается как поломка.
+    ipcMain.handle('updates:check', async () => {
+      if (!updater) return { state: 'error', version: app.getVersion(), error: 'Обновления ещё не готовы к проверке' }
+      log('Проверяю обновления по запросу из настроек')
+      return updater.check()
+    })
 
     ipcMain.handle('dialog:pick-video', async (event) => {
       const win = BrowserWindow.fromWebContents(event.sender)

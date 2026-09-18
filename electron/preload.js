@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld('api', {
   openSetup: () => ipcRenderer.send('setup:open'),
   openSettings: () => ipcRenderer.send('settings:open'),
 
+  getAppVersion: () => ipcRenderer.invoke('app:version'),
+  checkUpdates: () => ipcRenderer.invoke('updates:check'),
+
   // Помощник первой настройки проверяет то, что ввели, ещё до сохранения:
   // иначе "почему не работает" выясняется молча и сильно позже.
   checkObs: (url, password) => ipcRenderer.invoke('setup:check-obs', url, password),

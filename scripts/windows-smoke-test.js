@@ -126,6 +126,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('config:save', (_event, incoming) => incoming)
   // Последний шаг помощника зовёт окно настроек — в тесте открывать его не надо
   ipcMain.on('settings:open', () => {})
+  ipcMain.handle('app:version', () => ({ version: '9.9.9', installKind: 'installed' }))
+  // Проверка обновлений отвечает по очереди всем, чем может: сначала "всё
+  // свежее", потом пустой список выпусков, потом настоящая ошибка сети.
+  const UPDATE_ANSWERS = [
+    { state: 'none', current: '9.9.9' },
+    { state: 'error', current: '9.9.9', error: 'No published versions on GitHub' },
+    { state: 'error', current: '9.9.9', error: 'getaddrinfo ENOTFOUND github.com' }
+  ]
+  let updateAnswerIndex = 0
+  ipcMain.handle('updates:check', () => UPDATE_ANSWERS[Math.min(updateAnswerIndex++, UPDATE_ANSWERS.length - 1)])
 
   const settings = await openPage('settings.html')
   await check(settings, 'settings.html', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
@@ -194,6 +204,33 @@ app.whenReady().then(async () => {
       return tigerHint.includes("TigerTrade") && vatagaHint.includes("Vataga") && tigerHint !== vatagaHint
     })()
   `, (v) => v === true)
+
+  await check(settings, 'settings.html', 'версия программы показана в настройках',
+    'document.getElementById("app-version").textContent',
+    (v) => typeof v === 'string' && v.includes('9.9.9') && v.includes('установленная'))
+
+  // Кнопка проверки обязана отвечать на каждое нажатие, в том числе "у тебя
+  // последняя версия": проверка при запуске в этом случае молчит осознанно, но
+  // молчание в ответ на нажатую кнопку читается как поломка.
+  await check(settings, 'settings.html', 'проверка обновлений отвечает на каждое нажатие', `
+    (async () => {
+      const button = document.getElementById('check-updates')
+      const status = document.getElementById('update-status')
+      const results = []
+      for (let i = 0; i < 3; i++) {
+        button.click()
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        results.push({ cls: status.className, text: status.textContent })
+      }
+      return results
+    })()
+  `, (v) => Array.isArray(v) && v.length === 3
+       // Всё свежее — и это надо сказать вслух
+       && /ok/.test(v[0].cls) && /последняя версия — 9\.9\.9/.test(v[0].text)
+       // Выпусков нет вовсе — не поломка, и пугать красным незачем
+       && !/error/.test(v[1].cls) && /нет ни одного выпуска/.test(v[1].text)
+       // А вот сеть не отвечает — это уже ошибка
+       && /error/.test(v[2].cls) && /ENOTFOUND/.test(v[2].text))
 
   const help = await openPage('help.html')
   await check(help, 'help.html', 'справка загрузилась и в ней есть разделы',

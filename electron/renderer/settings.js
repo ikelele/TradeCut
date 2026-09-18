@@ -208,3 +208,64 @@ saveButton.addEventListener('click', async () => {
 })
 
 closeButton.addEventListener('click', () => window.api.closeWindow())
+
+// ── Версия и обновления ───────────────────────────────────────────────────
+
+const INSTALL_KIND_LABEL = {
+  installed: 'установленная',
+  portable: 'переносимая',
+  dev: 'сборка для разработки'
+}
+
+const versionEl = document.getElementById('app-version')
+const updateStatusEl = document.getElementById('update-status')
+const checkUpdatesButton = document.getElementById('check-updates')
+
+window.api.getAppVersion().then(({ version, installKind }) => {
+  const kind = INSTALL_KIND_LABEL[installKind] || installKind
+  versionEl.textContent = `Установлена версия ${version} (${kind})`
+})
+
+function setUpdateStatus(text, kind) {
+  updateStatusEl.className = kind ? `field-hint ${kind}` : 'field-hint'
+  updateStatusEl.textContent = text
+}
+
+// Ответ на нажатую кнопку нужен всегда — в том числе "всё в порядке, у тебя
+// последняя". Проверка при запуске в этом случае молчит, и это правильно, но
+// здесь молчание читалось бы как поломка.
+function describeUpdateResult(result) {
+  switch (result.state) {
+    case 'none':
+      return { text: `У тебя последняя версия — ${result.current}.`, kind: 'ok' }
+    case 'available':
+      return { text: `Вышла версия ${result.version}. Что делать дальше — в открывшемся окне.`, kind: 'ok' }
+    case 'dev':
+      return { text: 'Это сборка для разработки: обновляться ей не из чего.', kind: '' }
+    case 'busy':
+      return { text: 'Проверка уже идёт.', kind: '' }
+    case 'error':
+      // Отдельно про "выпусков нет вовсе": по английскому тексту от GitHub
+      // непонятно, что это не поломка, а просто пустая страница выпусков.
+      if (/No published versions/i.test(result.error || '')) {
+        return { text: 'На GitHub пока нет ни одного выпуска — сравнивать не с чем.', kind: '' }
+      }
+      return { text: `Не удалось проверить: ${result.error}`, kind: 'error' }
+    default:
+      return { text: `Непонятный ответ проверки: ${result.state}`, kind: 'error' }
+  }
+}
+
+checkUpdatesButton.addEventListener('click', async () => {
+  checkUpdatesButton.disabled = true
+  setUpdateStatus('Спрашиваю GitHub...', '')
+  try {
+    const result = await window.api.checkUpdates()
+    const { text, kind } = describeUpdateResult(result)
+    setUpdateStatus(text, kind)
+  } catch (error) {
+    setUpdateStatus(`Не удалось проверить: ${error.message || error}`, 'error')
+  } finally {
+    checkUpdatesButton.disabled = false
+  }
+})
