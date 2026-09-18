@@ -106,7 +106,8 @@ app.whenReady().then(async () => {
   // показывает три разных исхода: не подключилось / подключилось без буфера /
   // всё готово. Их легко перепутать в один красный цвет, а действия у них разные.
   const OBS_ANSWERS = [
-    { connected: false, replayBufferActive: false, error: 'проверочный отказ' },
+    { connected: false, replayBufferActive: false, error: 'connect ECONNREFUSED 127.0.0.1:4455' },
+    { connected: false, replayBufferActive: false, error: 'Authentication failed.' },
     { connected: true, replayBufferActive: false },
     { connected: true, replayBufferActive: true }
   ]
@@ -473,24 +474,30 @@ app.whenReady().then(async () => {
   await check(setup, 'setup.html', 'поля OBS заполнены из конфига',
     'document.getElementById("obs-url").value', (v) => v === config.obs.url)
 
-  // Три исхода проверки OBS должны читаться по-разному: не подключилось —
-  // ошибка, подключилось без буфера — предупреждение (пароль-то верный),
-  // всё включено — успех.
-  await check(setup, 'setup.html', 'проверка OBS различает три исхода', `
+  // Четыре исхода проверки OBS должны читаться по-разному, и это не
+  // придирка: советовать «проверь, запущен ли OBS» тому, кому OBS только что
+  // ответил «пароль не тот», — значит гонять его перепроверять исправное.
+  await check(setup, 'setup.html', 'проверка OBS различает исходы и советует по делу', `
     (async () => {
       const button = document.getElementById('check-obs')
       const status = document.getElementById('obs-status')
       const results = []
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         button.click()
         await new Promise((resolve) => setTimeout(resolve, 250))
         results.push({ cls: status.className, text: status.textContent })
       }
       return results
     })()
-  `, (v) => Array.isArray(v) && v.length === 3
-       && /error/.test(v[0].cls) && /warn/.test(v[1].cls) && /ok/.test(v[2].cls)
-       && /буфер повтора/.test(v[1].text))
+  `, (v) => Array.isArray(v) && v.length === 4
+       // Никто не отвечает: про OBS и галку сервера — уместно
+       && /error/.test(v[0].cls) && /запущен ли OBS/.test(v[0].text)
+       // Пароль не тот: OBS заведомо жив, речь должна идти только о пароле
+       && /error/.test(v[1].cls) && /Пароль не подошёл/.test(v[1].text)
+       && !/запущен ли OBS/.test(v[1].text)
+       // Подключились, но буфер выключен — предупреждение, а не ошибка
+       && /warn/.test(v[2].cls) && /буфер повтора/.test(v[2].text)
+       && /ok/.test(v[3].cls))
 
   await check(setup, 'setup.html', 'переход на второй шаг сохраняет введённый пароль OBS', `
     (async () => {

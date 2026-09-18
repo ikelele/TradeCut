@@ -115,6 +115,27 @@ skipButton.addEventListener('click', async () => {
 
 // ── Шаг 1: OBS ────────────────────────────────────────────────────────────
 
+// Неудачи подключения бывают трёх разных сортов, и валить их в один совет
+// «проверь, запущен ли OBS, включён ли сервер и тот ли пароль» — значит
+// заставлять перепроверять две заведомо исправные вещи. Если OBS ответил
+// «пароль не тот», значит он запущен и сервер в нём включён.
+function explainConnectFailure(error) {
+  const text = String(error || '')
+  // Точку в конце своего сообщения OBS ставит сам — второй подряд не нужно.
+  const reason = text.replace(/\.\s*$/, '')
+
+  if (/authentication/i.test(text)) {
+    return 'Пароль не подошёл. Возьми его копированием, а не глазами: в OBS ' +
+      '«Сервис → Настройки сервера WebSocket» → «Показать сведения о подключении» → ' +
+      'строка «Пароль сервера», кнопка «Копировать». И проверь, что в OBS нажато «Применить».'
+  }
+  if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT/i.test(text)) {
+    return `На этот адрес никто не отвечает (${reason}). Проверь, запущен ли OBS и стоит ли ` +
+      'в нём галка «Включить сервер WebSocket», а в адресе — тот же порт, что и в настройках OBS.'
+  }
+  return `Не подключилось: ${reason}.`
+}
+
 document.getElementById('check-obs').addEventListener('click', async () => {
   const button = document.getElementById('check-obs')
   button.disabled = true
@@ -124,9 +145,7 @@ document.getElementById('check-obs').addEventListener('click', async () => {
     const result = await window.api.checkObs(obsUrlEl.value.trim(), obsPasswordEl.value)
 
     if (!result.connected) {
-      setStatus(obsStatusEl,
-        `Не подключилось: ${result.error}. Проверь, запущен ли OBS, включён ли в нём сервер WebSocket и тот ли пароль.`,
-        'error')
+      setStatus(obsStatusEl, explainConnectFailure(result.error), 'error')
       return
     }
     if (!result.replayBufferActive) {
