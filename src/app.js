@@ -244,7 +244,10 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
           if (onHistoryChanged) onHistoryChanged(recentClips.slice())
         }
 
-        if (onStakanReady) onStakanReady(outputPath, `область «${areaName}»`, 1)
+        // Уведомления здесь нет намеренно. Обрезка идёт сама по каждой сделке,
+        // а всплывающее окно на каждый автоматический успех — это десятки
+        // окон за сессию ни о чём. О том, что клип готов, и так говорит
+        // мигание значка в трее; подробности — в журнале.
       },
       (error) => {
         const message = `Не удалось автоматически вырезать область из ${entry.clipPath}: ${error.message}`
