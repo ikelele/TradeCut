@@ -978,6 +978,69 @@ async function testMergedPartsDeletedByDefault() {
   console.log('[OK] testMergedPartsDeletedByDefault')
 }
 
+// Область, вырезанная автоматически, не должна пережить свой клип.
+//
+// Иначе от серии из трёх сделок остаётся один общий клип — и три области от
+// каждой сделки по отдельности, то есть ровно та каша, ради избавления от
+// которой сделки и объединяются.
+async function testAutoCropsDieWithTheirClips() {
+  const fixture = makeMergedPartsFixture('merged-parts-autocrop')
+
+  // К каждому отдельному клипу — своя автоматически вырезанная область,
+  // и отдельно область общего клипа: она уцелеть обязана.
+  const cropOf = new Map()
+  for (const entry of fixture.recentClips) {
+    const cropPath = entry.clipPath.replace(/\.mp4$/, '-область.mp4')
+    fs.writeFileSync(cropPath, 'x')
+    entry.autoCropPath = cropPath
+    cropOf.set(entry.clipPath, cropPath)
+  }
+
+  await handleMergedParts({
+    batch: fixture.batch,
+    mergedClipPath: fixture.mergedClipPath,
+    config: { clip: { keepMergedParts: 0, mergedPartsSubdir: 'parts' } },
+    log: () => {},
+    recentClips: fixture.recentClips,
+    onHistoryChanged: () => {}
+  })
+
+  const left = fs.readdirSync(fixture.dir).sort()
+  assert.deepStrictEqual(left, ['COMBO-область.mp4', 'COMBO.mp4'],
+    `должны остаться только общий клип и его область, осталось ${left}`)
+  assert.strictEqual(fixture.recentClips.length, 1, 'в истории должен остаться только общий клип')
+  assert.strictEqual(fixture.recentClips[0].autoCropPath, cropOf.get(fixture.mergedClipPath),
+    'область общего клипа обязана уцелеть')
+
+  fs.rmSync(fixture.dir, { recursive: true, force: true })
+  console.log('[OK] testAutoCropsDieWithTheirClips')
+}
+
+// Полный клип могли удалить сразу после автоматической обрезки — тогда при
+// объединении серии удалять уже нечего, и жаловаться на это не на что.
+async function testMergedPartsSurviveAlreadyDeletedClips() {
+  const fixture = makeMergedPartsFixture('merged-parts-gone')
+  const complaints = []
+
+  // Так выглядит включённое "удалять полный клип после обрезки": файлов уже нет
+  for (const trade of fixture.batch.trades) fs.unlinkSync(trade.clipPath)
+
+  await handleMergedParts({
+    batch: fixture.batch,
+    mergedClipPath: fixture.mergedClipPath,
+    config: { clip: { keepMergedParts: 0, mergedPartsSubdir: 'parts' } },
+    log: (message) => { if (/Не удалось/.test(message)) complaints.push(message) },
+    recentClips: fixture.recentClips,
+    onHistoryChanged: () => {}
+  })
+
+  assert.deepStrictEqual(complaints, [], `жалоб быть не должно, а они есть: ${complaints.join(' | ')}`)
+  assert.strictEqual(fixture.recentClips.length, 1, 'история всё равно должна забыть удалённые клипы')
+
+  fs.rmSync(fixture.dir, { recursive: true, force: true })
+  console.log('[OK] testMergedPartsSurviveAlreadyDeletedClips')
+}
+
 // С включённой галкой ничего не удаляется — клипы переезжают в подпапку, а
 // история начинает ссылаться на новое место.
 async function testMergedPartsMovedWhenKept() {
@@ -1403,6 +1466,8 @@ async function main() {
   await testCropClipWithoutStakanKeepsFullFrame()
   await testCropClipMuteDropsAudio()
   await testMergedPartsDeletedByDefault()
+  await testAutoCropsDieWithTheirClips()
+  await testMergedPartsSurviveAlreadyDeletedClips()
   await testMergedPartsMovedWhenKept()
   await testMergedPartsKeptInPlace()
   testResolveCropRect()

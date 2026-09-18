@@ -57,9 +57,23 @@ async function handleMergedParts({ batch, mergedClipPath, config, log, recentCli
 
   // Ссылки на удалённый/переехавший файл надо убрать из истории трея и окна,
   // иначе "вырезать область" из этой сделки потом не найдёт файл.
-  const forgetClip = (clipPath) => {
+  //
+  // Заодно уносим область, вырезанную из этого клипа автоматически: пережить
+  // свой исходник она не должна. Иначе от серии из пяти сделок оставался бы
+  // один общий клип и пять областей от каждой сделки по отдельности — ровно
+  // та каша, ради избавления от которой сделки и объединяются.
+  const forgetClip = async (clipPath) => {
     for (let i = recentClips.length - 1; i >= 0; i--) {
-      if (recentClips[i].clipPath === clipPath) recentClips.splice(i, 1)
+      if (recentClips[i].clipPath !== clipPath) continue
+      const { autoCropPath } = recentClips[i]
+      recentClips.splice(i, 1)
+      if (!autoCropPath) continue
+      try {
+        await fsp.unlink(autoCropPath)
+        log(`Область, вырезанная из этого клипа автоматически, удалена вместе с ним: ${autoCropPath}`)
+      } catch (error) {
+        log(`Не удалось удалить ${autoCropPath}: ${error.message}`)
+      }
     }
   }
   const repointClip = (from, to) => {
@@ -72,14 +86,21 @@ async function handleMergedParts({ batch, mergedClipPath, config, log, recentCli
     let removed = 0
     for (const trade of batch.trades) {
       if (!trade.clipPath) continue
+      let gone = false
       try {
         await fsp.unlink(trade.clipPath)
-        forgetClip(trade.clipPath)
-        trade.clipPath = null
+        gone = true
         removed++
       } catch (error) {
-        log(`Не удалось удалить отдельный клип ${trade.clipPath}: ${error.message}`)
+        // Файла может уже не быть — например, включено "удалять полный клип
+        // после автоматической обрезки", и он исчез сразу после сделки. Это не
+        // повод сообщать о неудаче: результат ровно тот, которого мы и хотели.
+        if (error.code === 'ENOENT') gone = true
+        else log(`Не удалось удалить отдельный клип ${trade.clipPath}: ${error.message}`)
       }
+      if (!gone) continue
+      await forgetClip(trade.clipPath)
+      trade.clipPath = null
     }
     if (removed > 0) log(`Отдельные клипы серии удалены (${removed} шт.) — остался общий клип`)
     if (removed > 0 && onHistoryChanged) onHistoryChanged(recentClips.slice())
@@ -159,7 +180,63 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
   // сделки". Урезается только то, что показывает меню трея (нативное меню
   // Windows не прокручивается), и этим занимается уже сам трей.
   function addToHistory(entry) {
-    recentClips.unshift({ ...entry, id: `${Date.now()}-${recentClips.length}` })
+    const stored = { ...entry, id: `${Date.now()}-${recentClips.length}` }
+    recentClips.unshift(stored)
+    return stored
+  }
+
+  // Автоматическая обрезка по области — сразу после того, как клип готов.
+  //
+  // Стакан на разборе почти всегда нужен один и тот же, а резать его руками
+  // после каждой сделки — лишний ритуал. Область выбирается один раз в
+  // настройках (clip.autoCropArea), пусто — ничего не режем.
+  //
+  // Идёт через ту же очередь, что и остальная обработка: ffmpeg не любит,
+  // когда его запускают пачкой параллельно, а серия сделок даёт как раз пачку.
+  function autoCropClip(entry) {
+    const areaName = String(config.clip.autoCropArea || '').trim()
+    if (!areaName) return
+
+    const preset = (config.clip.cropPresets || []).find((item) => item.name === areaName)
+    if (!preset) {
+      log(`Область «${areaName}» для автоматической обрезки не найдена среди сохранённых — клип остаётся целым`)
+      return
+    }
+
+    enqueue(
+      async () => {
+        const outputPath = await cropClipToStakan(entry.clipPath, null, resolveMediaPath(config.clip.stakanOutputDir), {
+          cropRect: preset,
+          mute: Boolean(config.clip.trayCropMuted)
+        })
+        log(`Область «${areaName}» вырезана автоматически: ${outputPath}`)
+
+        if (!config.clip.autoCropDeleteFull) {
+          // Полный клип остаётся; помним про вырезанный, чтобы он не пережил
+          // исходник, если тот удалят при объединении серии.
+          entry.autoCropPath = outputPath
+        } else {
+          const fullClipPath = entry.clipPath
+          // История переезжает на вырезанный файл: из трея по этой сделке всё
+          // ещё можно ускорить или подрезать — просто уже область, а не кадр.
+          entry.clipPath = outputPath
+          try {
+            await fsp.unlink(fullClipPath)
+            log(`Полный клип удалён, осталась только область: ${fullClipPath}`)
+          } catch (error) {
+            log(`Не удалось удалить полный клип ${fullClipPath}: ${error.message}`)
+          }
+          if (onHistoryChanged) onHistoryChanged(recentClips.slice())
+        }
+
+        if (onStakanReady) onStakanReady(outputPath, `область «${areaName}»`, 1)
+      },
+      (error) => {
+        const message = `Не удалось вырезать область «${areaName}» автоматически: ${error.message}`
+        log(message)
+        if (onIssue) onIssue(message)
+      }
+    )
   }
 
   // Все SaveReplayBuffer-вызовы (и чекпоинты, и закрытия сделок) идут через
@@ -279,7 +356,7 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
       await deleteSourceReplayIfEnabled(replayPath, config, log)
     }
 
-    addToHistory({ trade, clipPath, label: buildHistoryLabel(trade) })
+    autoCropClip(addToHistory({ trade, clipPath, label: buildHistoryLabel(trade) }))
 
     if (onClipReady) onClipReady(trade, clipPath, recentClips.slice())
   }
@@ -325,7 +402,7 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
       entryTimeMs: batch.trades[0].entryTimeMs,
       exitTimeMs: lastTrade.exitTimeMs
     }
-    addToHistory({ trade: pseudoTrade, clipPath: mergedClipPath, label: buildHistoryLabel(pseudoTrade) })
+    autoCropClip(addToHistory({ trade: pseudoTrade, clipPath: mergedClipPath, label: buildHistoryLabel(pseudoTrade) }))
 
     if (onClipReady) onClipReady(pseudoTrade, mergedClipPath, recentClips.slice())
   }

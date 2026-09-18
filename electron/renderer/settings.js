@@ -20,6 +20,10 @@ const FIELDS = [
   { id: 'manual-replay-dir', path: ['clip', 'manualReplayOutputDir'], type: 'text' },
   { id: 'delete-replays', path: ['clip', 'deleteSourceReplays'], type: 'checkbox' },
   { id: 'tray-crop-muted', path: ['clip', 'trayCropMuted'], type: 'checkbox' },
+  // Выпадающий список ведёт себя как обычное поле: и читается, и пишется
+  // через .value, поэтому отдельный тип ему не нужен.
+  { id: 'auto-crop-area', path: ['clip', 'autoCropArea'], type: 'text' },
+  { id: 'auto-crop-delete-full', path: ['clip', 'autoCropDeleteFull'], type: 'checkbox' },
   // Пустое поле здесь осмысленно: "не делить кадр вовсе". Обычный number
   // показал бы 0, а ноль в графе "на сколько частей" выглядит как поломка.
   { id: 'stakan-count', path: ['clip', 'stakanCount'], type: 'number', zeroIsEmpty: true },
@@ -103,8 +107,32 @@ const presetListEl = document.querySelector('[data-role="preset-list"]')
 // а без этого "Сохранить" затёрло бы всю настройку границ.
 let loadedPresets = []
 
+// Выбор «что вырезать сразу» строится из тех же сохранённых областей —
+// выбирать тут больше не из чего.
+function renderAutoCropChoices() {
+  const select = document.getElementById('auto-crop-area')
+  const previous = select.value
+  select.innerHTML = ''
+
+  const none = document.createElement('option')
+  none.value = ''
+  none.textContent = 'Не вырезать'
+  select.appendChild(none)
+
+  for (const preset of loadedPresets) {
+    const option = document.createElement('option')
+    option.value = preset.name
+    option.textContent = preset.name
+    select.appendChild(option)
+  }
+
+  // Выбранную область могли только что удалить — возвращаться не к чему.
+  select.value = loadedPresets.some((item) => item.name === previous) ? previous : ''
+}
+
 function renderPresets(presets) {
   loadedPresets = Array.isArray(presets) ? presets : []
+  renderAutoCropChoices()
   presetListEl.innerHTML = ''
   if (loadedPresets.length === 0) {
     const empty = document.createElement('div')

@@ -172,6 +172,16 @@ const DEFAULT_CONFIG = {
     // не нужен вообще", принятое один раз. На сами клипы сделок не влияет:
     // там звук сохраняется всегда.
     trayCropMuted: 0,
+    // Имя области, которая вырезается из клипа СРАЗУ, без участия человека.
+    // Пусто — не вырезать, клип остаётся на весь кадр (так по умолчанию).
+    // Смысл настройки в том, что стакан на разборе нужен почти всегда один и
+    // тот же, а резать его руками после каждой сделки — лишний ритуал.
+    autoCropArea: '',
+    // Удалять ли клип на весь кадр после того, как область из него вырезана.
+    // По умолчанию НЕТ: область можно настроить неудачно, и запись, которой
+    // уже нет, обратно не вернуть. Включать это стоит, когда область проверена
+    // — полный клип на каждую сделку весит около сотни мегабайт.
+    autoCropDeleteFull: 0,
     // Сколько последних клипов показывать В МЕНЮ ТРЕЯ. Сама история за сессию
     // хранится целиком и доступна в окне "Все сделки" — здесь ограничивается
     // только меню: нативное меню Windows не прокручивается, и слишком длинный
@@ -295,6 +305,8 @@ function saveConfig(incoming) {
       replayPresetsSec: normalizeNumberList(merged.clip.replayPresetsSec, DEFAULT_CONFIG.clip.replayPresetsSec, { min: 1, max: 3600, round: true }),
       speedPresets: normalizeNumberList(merged.clip.speedPresets, DEFAULT_CONFIG.clip.speedPresets, { min: 0.25, max: 20, round: false }),
       trayCropMuted: flag(merged.clip.trayCropMuted),
+      autoCropArea: String(merged.clip.autoCropArea || '').trim(),
+      autoCropDeleteFull: flag(merged.clip.autoCropDeleteFull),
       stakanCount: Math.max(0, Math.min(24, Math.round(num(merged.clip.stakanCount, DEFAULT_CONFIG.clip.stakanCount)))),
       // Настроенные области переживают сохранение из окна настроек, даже если
       // оно про них не знает: окно шлёт только свои поля, и без этой проверки

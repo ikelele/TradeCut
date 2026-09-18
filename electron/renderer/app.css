@@ -568,3 +568,16 @@ button:disabled { opacity: 0.5; cursor: default; }
    состояния окна: та занята сохранением настроек. */
 .field-hint.ok { color: var(--ok); }
 .field-hint.error { color: var(--error); }
+
+/* Выпадающий список — теми же правилами, что и поля ввода рядом. */
+select {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+select:focus { outline: 1px solid var(--accent); }

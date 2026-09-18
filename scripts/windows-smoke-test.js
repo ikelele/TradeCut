@@ -59,6 +59,12 @@ app.whenReady().then(async () => {
   initAppPaths()
   const { loadConfig } = require('../src/config')
   const config = loadConfig()
+  // Области кадра подставляем свои: у настоящего конфига их может не быть
+  // вовсе, а проверять надо окно с ними — из них строится и список
+  // "что вырезать сразу".
+  config.clip.cropPresets = [
+    { name: 'Левый стакан', x: 0, y: 0, width: 160, height: 240, sourceWidth: 320, sourceHeight: 240 }
+  ]
 
   // Иконки трея: проверяем ровно тот путь, которым их берёт приложение —
   // что файл читается и что размер уже уменьшен под трей, а не остаётся
@@ -174,6 +180,29 @@ app.whenReady().then(async () => {
        && v.speed === config.clip.speedPresets.join(', '))
   await check(settings, 'settings.html', 'список своих областей кадра есть',
     '!!document.querySelector("[data-role=preset-list]")', (v) => v === true)
+  // Выбирать «что вырезать сразу» можно только из настроенных областей —
+  // список строится из них же, плюс «не вырезать» первым пунктом.
+  await check(settings, 'settings.html', 'автообрезка предлагает настроенные области и «не вырезать»',
+    `(() => {
+       const select = document.getElementById('auto-crop-area')
+       return {
+         options: [...select.options].map((o) => o.textContent),
+         firstValue: select.options[0].value,
+         selected: select.value
+       }
+     })()`,
+    (v) => v && v.options[0] === 'Не вырезать' && v.firstValue === ''
+      && v.options.includes('Левый стакан') && v.selected === '')
+
+  await check(settings, 'settings.html', 'выбранная область уезжает в конфиг при сохранении',
+    `(() => {
+       document.getElementById('auto-crop-area').value = 'Левый стакан'
+       document.getElementById('auto-crop-delete-full').checked = true
+       const collected = collectForm()
+       return { area: collected.clip.autoCropArea, deleteFull: collected.clip.autoCropDeleteFull }
+     })()`,
+    (v) => v && v.area === 'Левый стакан' && v.deleteFull === true)
+
   await check(settings, 'settings.html', 'из настроек можно открыть окно настройки областей',
     'typeof window.api.openCropWindow === "function" && !!document.getElementById("open-crop")', (v) => v === true)
   await check(settings, 'settings.html', 'сохранение из настроек не теряет настроенные области', `
