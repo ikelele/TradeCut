@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- media-src нужен для превью клипа в визуальной обрезке: без него
+       default-src 'none' запрещает загрузку видео в окно. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' file:">
+  <link rel="stylesheet" href="app.css">
+  <title>Обрезка клипа</title>
+</head>
+<body>
+  <h1>Обрезка готового клипа</h1>
+  <p class="hint">Выбери видеофайл и что с ним сделать. Область кадра выбирать необязательно: с «Весь кадр» можно просто ускорить клип или отрезать лишнее по времени. Исходный файл никогда не меняется — результат кладётся отдельным файлом.</p>
+
+  <div class="dropzone" id="dropzone">
+    <div id="file-name">Перетащи сюда видеофайл</div>
+    <div class="dropzone-actions">
+      <button type="button" class="secondary" id="pick">Выбрать файл...</button>
+    </div>
+  </div>
+
+  <div id="crop-form"></div>
+
+  <div class="actions">
+    <button type="button" class="primary" id="run" disabled>Вырезать</button>
+    <button type="button" class="secondary" id="close">Закрыть</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <script src="cropPreview.js"></script>
+  <script src="cropForm.js"></script>
+  <script src="crop.js"></script>
+</body>
+</html>

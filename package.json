@@ -1,0 +1,96 @@
+{
+  "name": "tradecut",
+  "version": "1.0.0",
+  "description": "Режет клипы твоих сделок из буфера повтора OBS по журналу торгового терминала",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pretest": "node -e \"require('fs').mkdirSync('test-assets',{recursive:true})\" && ffmpeg -y -f lavfi -i \"testsrc=duration=10:size=320x240:rate=25\" -c:v libx264 -pix_fmt yuv420p test-assets/fake-replay.mkv",
+    "test": "node scripts/wiring-audit.js && node test/run-tests.js && node scripts/settings-save-smoke-test.js",
+    "build:icons": "node scripts/generate-icons.js",
+    "package": "npm run build:icons && electron-builder --win",
+    "test:windows": "electron scripts/windows-smoke-test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "electron-updater": "^6.8.9",
+    "ffmpeg-static": "^5.3.0",
+    "obs-websocket-js": "^5.0.8"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.tradecut.app",
+    "productName": "TradeCut",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "!**/*.map",
+      "!node_modules/ffmpeg-static/**",
+      "!node_modules/@ffprobe-installer/**"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+        "to": "tools/ffmpeg.exe"
+      },
+      {
+        "from": "node_modules/@ffprobe-installer/win32-x64/ffprobe.exe",
+        "to": "tools/ffprobe.exe"
+      }
+    ],
+    "win": {
+      "icon": "assets/app-icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "TradeCut-${version}-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TradeCut",
+      "artifactName": "TradeCut-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ikelele",
+        "repo": "TradeCut"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ikelele/TradeCut.git"
+  }
+}
