@@ -316,22 +316,45 @@ button:disabled { opacity: 0.5; cursor: default; }
 .timeline {
   position: relative;
   flex: 1;
-  height: 26px;
+  /* Под полоску кадров: по ней видно, где в клипе что, но только если кадры
+     достаточно крупные, чтобы их различать. */
+  height: 46px;
   background: var(--panel-hover);
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
+  overflow: hidden;
 }
 
-/* Оставляемый кусок подсвечен, отрезаемое по краям остаётся тёмным */
+/* Кадры клипа фоном дорожки. Мышь сквозь них проходит: тянут ручки и само
+   выделение, а полоска только показывает. */
+.timeline-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.timeline-strip img {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Отрезаемое затемнено, оставляемое видно как есть — тем же приёмом, что и
+   рамка на кадре: огромная тень вокруг выделения, обрезанная краями дорожки.
+   Раньше было наоборот, заливкой поверх выделения, и она забивала кадры на
+   полоске — ровно то, ради чего их туда и положили. */
 .timeline-range {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(79, 140, 255, 0.25);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
   border-left: 1px solid var(--accent);
   border-right: 1px solid var(--accent);
-  pointer-events: none;
+  cursor: grab;
 }
 
 .timeline-playhead {

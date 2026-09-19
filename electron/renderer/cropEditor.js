@@ -42,6 +42,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   const box = document.getElementById('box')
   const emptyEl = document.getElementById('empty')
   const timeline = document.getElementById('timeline')
+  const stripEl = document.getElementById('strip')
   const rangeEl = document.getElementById('range')
   const playheadEl = document.getElementById('playhead')
   const playButton = document.getElementById('play')
@@ -52,8 +53,12 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   const sizeEl = document.getElementById('size')
   const statusEl = document.getElementById('status')
 
+  let clipPath = null
   let natural = null // { width, height } исходного кадра
   let boxRect = null // { x, y, width, height } в пикселях исходного кадра
+  // Номер последнего запроса полоски кадров: пока она собирается, файл могут
+  // сменить, и пришедшие кадры будут уже не от него.
+  let stripRequest = 0
   // Границы того, что оставляем, в секундах от начала файла
   let keepFrom = 0
   let keepTo = 0
@@ -247,6 +252,24 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
     drawTimeline()
   }
 
+  // Кадры клипа фоном дорожки: по ним видно, где сделка, не проигрывая запись.
+  // Собираются они несколько секунд (отдельные перемотки ffmpeg), и всё это
+  // время дорожка уже работает — кадры просто появляются на ней чуть позже.
+  function loadFilmstrip() {
+    stripEl.innerHTML = ''
+    if (!clipPath || !window.api.buildFilmstrip) return
+    const request = ++stripRequest
+    window.api.buildFilmstrip(clipPath, duration()).then((thumbs) => {
+      if (request !== stripRequest || !Array.isArray(thumbs)) return
+      for (const thumb of thumbs) {
+        const image = document.createElement('img')
+        image.src = thumb.dataUri
+        image.alt = ''
+        stripEl.appendChild(image)
+      }
+    }).catch(() => {})
+  }
+
   function timeAtClientX(clientX) {
     const bounds = timeline.getBoundingClientRect()
     if (!bounds.width) return 0
@@ -415,6 +438,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
     keepTo = duration()
     rangeChanged = false
     drawTimeline()
+    loadFilmstrip()
     setStatus('Потяни рамку за края. Пробел — воспроизведение, [ и ] — отрезать по текущему кадру, стрелки — шаг на 0,1 с (с Shift — на секунду).')
 
     // Не первый кадр: у записи с рабочего стола он часто ещё пустой
@@ -433,9 +457,14 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   })
 
   return {
-    open(clipPath) {
+    open(filePath) {
+      clipPath = filePath
+      // Кадры на дорожке относятся к прежнему файлу — убираем сразу, не
+      // дожидаясь новых: иначе несколько секунд они показывали бы не то.
+      stripRequest++
+      stripEl.innerHTML = ''
       setStatus('Загружаю видео...')
-      video.src = `file:///${String(clipPath).replace(/\\/g, '/')}`
+      video.src = `file:///${String(filePath).replace(/\\/g, '/')}`
       video.load()
     },
     // Показать область, выбранную кнопкой в форме. getRect(frameSize) вернёт

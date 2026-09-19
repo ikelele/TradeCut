@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld('api', {
   // Границы панелей терминала, найденные по кадру клипа
   detectPanels: (clipPath, timeSec) => ipcRenderer.invoke('panels:detect', clipPath, timeSec),
 
+  // Кадры из клипа для полоски под дорожкой обрезки
+  buildFilmstrip: (clipPath, durationSec) => ipcRenderer.invoke('filmstrip:build', clipPath, durationSec),
+
   // Области кадра, сохранённые под именем. Живут в config.json, но правятся не
   // в окне настроек, а в окне обрезки — там видно картинку.
   getCropPresets: () => ipcRenderer.invoke('crop-presets:list'),

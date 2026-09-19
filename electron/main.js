@@ -432,6 +432,20 @@ function main() {
       return { ...guides, width: size.width, height: size.height }
     })
 
+    // Полоска кадров под дорожку обрезки. Длительность приходит из окна: оно
+    // уже знает её от самого видео, и лишний вызов ffprobe тут ни к чему.
+    ipcMain.handle('filmstrip:build', async (_event, clipPath, durationSec) => {
+      const { buildFilmstrip } = require('../src/filmstrip')
+      try {
+        return await buildFilmstrip(clipPath, durationSec)
+      } catch (error) {
+        // Картинка на дорожке — удобство, а не работа программы. Не вышло —
+        // дорожка просто останется серой.
+        log(`Не удалось собрать полоску кадров для ${clipPath}: ${error.message}`)
+        return []
+      }
+    })
+
     ipcMain.handle('crop-presets:list', () => config.clip.cropPresets)
 
     function applyCropPresets(nextPresets, logMessage) {

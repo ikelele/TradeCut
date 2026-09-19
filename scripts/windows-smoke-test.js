@@ -100,6 +100,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('dialog:pick-video', () => path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv'))
   // Границы панелей для тестового кадра 320x240: две вертикальные линии делят
   // его на три колонки, одна горизонтальная отделяет "шапку".
+  ipcMain.handle('filmstrip:build', (_event, clipPath, durationSec) => {
+    const { buildFilmstrip } = require('../src/filmstrip')
+    return buildFilmstrip(clipPath, durationSec)
+  })
   ipcMain.handle('panels:detect', () => ({
     vertical: [0, 100, 200],
     horizontal: [30],
@@ -548,6 +552,26 @@ app.whenReady().then(async () => {
   `, (v) => v && v.sameSize === true
        && v.stage[0] <= v.available[0] + 1 && v.stage[1] <= v.available[1] + 1
        && (v.stage[0] >= v.available[0] - 1 || v.stage[1] >= v.available[1] - 1))
+
+  // Полоска кадров на дорожке — то, чем обычные видеорезалки отличаются от
+  // серой линии: по ней видно, где в клипе что, не проигрывая его.
+  await check(crop, 'crop.html', 'на дорожке появляются кадры клипа', `
+    (async () => {
+      const strip = document.getElementById('strip')
+      // Собираются они отдельными перемотками ffmpeg — это не мгновенно
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (strip.querySelector('img')) break
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      const images = [...strip.querySelectorAll('img')]
+      return {
+        count: images.length,
+        kind: images.length ? images[0].src.slice(0, 15) : '',
+        // Сквозь полоску должны проходить и щелчки по дорожке, и перетаскивание
+        clickable: getComputedStyle(strip).pointerEvents
+      }
+    })()
+  `, (v) => v && v.count === 12 && v.kind === 'data:image/jpeg' && v.clickable === 'none')
 
   // Нажатие на кнопку области должно показывать её прямо на кадре — иначе по
   // названию «Левый стакан» не понять, что именно вырежется.
