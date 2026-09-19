@@ -156,8 +156,13 @@ countInput.addEventListener('input', () => {
   setCount(Number.isFinite(count) ? count : 0)
 })
 
-// Окно меняет размер — сетка нарисована в экранных пикселях и едет следом.
-window.addEventListener('resize', () => { if (grid) render() })
+// Окно меняет размер — кадр вписываем заново, а за ним и сетку: она
+// нарисована в экранных пикселях и должна поехать следом.
+window.addEventListener('resize', () => {
+  if (!natural) return
+  fitFrameInto(stage, frameEl, natural)
+  if (grid) render()
+})
 
 // ── Видео ─────────────────────────────────────────────────────────────────
 
@@ -173,10 +178,10 @@ function openClip(filePath) {
 
 video.addEventListener('loadedmetadata', () => {
   natural = { width: video.videoWidth, height: video.videoHeight }
-  // Пропорции кадра — единственное, что скрипт сообщает вёрстке. Дальше
-  // браузер сам вписывает его в свободное место: и уменьшит запись 3440x1440,
-  // и растянет маленькую, не искажая и не оставляя пустоты по краям.
-  stage.style.aspectRatio = `${natural.width} / ${natural.height}`
+  // Размер кадра считаем сами — см. fitFrame.js. Попытка отдать это браузеру
+  // (ширина 100% + пропорции) на 3440x1440 давала кадр выше, чем окно, и его
+  // низ вместе с нижней границей уезжал под подсказку.
+  fitFrameInto(stage, frameEl, natural)
   // Ставим кадр из середины записи: в самом начале терминал может быть ещё
   // не отрисован, да и разглядывать первый кадр обычно нечего.
   video.currentTime = Math.min(1, (video.duration || 0) / 2)

@@ -60,7 +60,7 @@ const { getAdapter } = require('../src/terminalLog')
 assert.strictEqual(getAdapter(config.terminal.type).displayName, 'TigerTrade')
 console.log('[OK] watcher получит адаптер TigerTrade')
 
-// Пресеты обрезки сохраняются не из окна настроек, а из превью — но через тот
+// Пресеты обрезки сохраняются не из окна настроек, а из разметки областей — но через тот
 // же saveConfig, поэтому проверяем, что они переживают запись и что мусорные
 // записи до файла не доходят.
 const withPresets = saveConfig({

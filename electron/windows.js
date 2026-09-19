@@ -162,8 +162,10 @@ function openAreasWindow() {
 function openCropWindow() {
   return createWindow({
     page: 'crop.html',
-    width: 620,
-    height: 700,
+    // Окно редактора, а не формы: кадр здесь главное, и открываться оно
+    // должно сразу такого размера, чтобы его было видно.
+    width: 1100,
+    height: 760,
     title: 'TradeCut — обрезка клипа'
   })
 }

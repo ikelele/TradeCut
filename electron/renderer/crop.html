@@ -2,33 +2,66 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <!-- media-src нужен для превью клипа в визуальной обрезке: без него
-       default-src 'none' запрещает загрузку видео в окно. -->
+  <!-- media-src нужен для кадра клипа: без него default-src 'none'
+       запрещает загрузку видео в окно. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' file:">
   <link rel="stylesheet" href="app.css">
   <title>Обрезка клипа</title>
 </head>
-<body>
-  <h1>Обрезка готового клипа</h1>
-  <p class="hint">Выбери видеофайл и что с ним сделать. Область кадра выбирать необязательно: с «Весь кадр» можно просто ускорить клип или отрезать лишнее по времени. Исходный файл никогда не меняется — результат кладётся отдельным файлом.</p>
-
-  <div class="dropzone" id="dropzone">
-    <div id="file-name">Перетащи сюда видеофайл</div>
-    <div class="dropzone-actions">
-      <button type="button" class="secondary" id="pick">Выбрать файл...</button>
-    </div>
-  </div>
-
-  <div id="crop-form"></div>
-
-  <div class="actions">
+<body class="editor-window">
+  <div class="editor-top">
+    <span class="editor-file" id="file-name">Файл не выбран</span>
+    <button type="button" class="secondary" id="pick">Выбрать файл...</button>
+    <span class="editor-spacer"></span>
     <button type="button" class="primary" id="run" disabled>Вырезать</button>
-    <button type="button" class="secondary" id="close">Закрыть</button>
   </div>
+
+  <div class="editor-frame" id="frame">
+    <div class="editor-stage" id="stage" hidden>
+      <video id="video" preload="metadata"></video>
+      <div class="crop-box" id="box" hidden>
+        <div class="crop-handle crop-handle-nw" data-handle="nw"></div>
+        <div class="crop-handle crop-handle-n" data-handle="n"></div>
+        <div class="crop-handle crop-handle-ne" data-handle="ne"></div>
+        <div class="crop-handle crop-handle-e" data-handle="e"></div>
+        <div class="crop-handle crop-handle-se" data-handle="se"></div>
+        <div class="crop-handle crop-handle-s" data-handle="s"></div>
+        <div class="crop-handle crop-handle-sw" data-handle="sw"></div>
+        <div class="crop-handle crop-handle-w" data-handle="w"></div>
+      </div>
+    </div>
+    <p class="editor-empty" id="empty">Перетащи сюда видеофайл — или выбери его кнопкой сверху</p>
+  </div>
+
+  <div class="editor-track">
+    <button type="button" class="secondary play-button" id="play" title="Пробел">▶</button>
+    <button type="button" class="secondary play-button" id="loop" aria-pressed="false" title="Повторять выделенное по кругу">⟲</button>
+    <button type="button" class="secondary play-button" id="sound" title="Звук в окне (на результат не влияет)">🔊</button>
+    <div class="timeline" id="timeline">
+      <div class="timeline-range" id="range"></div>
+      <div class="timeline-playhead" id="playhead"></div>
+      <div class="timeline-handle timeline-handle-start" data-trim="start"></div>
+      <div class="timeline-handle timeline-handle-end" data-trim="end"></div>
+    </div>
+    <span class="editor-time" id="time"></span>
+  </div>
+
+  <div class="editor-marks">
+    <button type="button" class="secondary" id="mark-start" title="Начать отсюда (клавиша [)">[ Начало здесь</button>
+    <button type="button" class="secondary" id="mark-end" title="Закончить здесь (клавиша ])">Конец здесь ]</button>
+    <button type="button" class="secondary" id="trim-reset">Весь клип</button>
+    <span class="editor-note" id="trim-label"></span>
+    <span class="editor-spacer"></span>
+    <span class="editor-note" id="size"></span>
+    <button type="button" class="secondary" id="reset-box">Вся картинка</button>
+  </div>
+
+  <div id="crop-form" class="editor-settings"></div>
 
   <div class="status" id="status"></div>
 
-  <script src="cropPreview.js"></script>
+  <script src="fitFrame.js"></script>
+  <script src="cropEditor.js"></script>
   <script src="cropForm.js"></script>
   <script src="crop.js"></script>
 </body>

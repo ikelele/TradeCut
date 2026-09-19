@@ -95,7 +95,7 @@ app.whenReady().then(async () => {
     { label: 'TESTUSDT LONG 08-02 00:10', clipPath: 'C:\\clips\\test.mp4' }
   ]))
   ipcMain.handle('crop:dropped-file', () => null)
-  // Кнопка "Выбрать файл..." отдаёт тестовый клип — так проверки превью идут
+  // Кнопка "Выбрать файл..." отдаёт тестовый клип — так проверки редактора идут
   // тем же путём, что и у пользователя, а не подсовывают видео напрямую.
   ipcMain.handle('dialog:pick-video', () => path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv'))
   // Границы панелей для тестового кадра 320x240: две вертикальные линии делят
@@ -367,17 +367,22 @@ app.whenReady().then(async () => {
   // вперемешку с обрезкой клипа, и кадру доставались остатки.
   const areas = await openPage('areas.html')
 
-  await check(areas, 'areas.html', 'кадр занимает всё свободное место окна', `
+  await check(areas, 'areas.html', 'кадр занимает всё свободное место и не вылезает за него', `
     (() => {
-      const frame = document.getElementById('frame').getBoundingClientRect()
+      const frame = document.getElementById('frame')
       const stage = document.getElementById('stage').getBoundingClientRect()
       return {
-        frameWidth: Math.round(frame.width),
-        stageWidth: Math.round(stage.width),
-        fills: stage.width >= frame.width - 2 || stage.height >= frame.height - 2
+        available: [frame.clientWidth, frame.clientHeight],
+        stage: [Math.round(stage.width), Math.round(stage.height)]
       }
     })()
-  `, (v) => v && v.fills === true && v.stageWidth > 300)
+  `, (v) => v && v.stage[0] > 300
+       // Вылезать нельзя ни по одной стороне: на 3440x1440 кадр выходил
+       // высотой 1304 при 1100 доступных, и нижняя граница — та самая, которую
+       // тянут мышью, — оказывалась за краем окна.
+       && v.stage[0] <= v.available[0] + 1 && v.stage[1] <= v.available[1] + 1
+       // И при этом упирается хотя бы в одну сторону, иначе место простаивает
+       && (v.stage[0] >= v.available[0] - 1 || v.stage[1] >= v.available[1] - 1))
 
   await check(areas, 'areas.html', 'число стаканов сразу рисует пронумерованные области', `
     (async () => {
@@ -441,28 +446,51 @@ app.whenReady().then(async () => {
   await check(help, 'help.html', 'кнопка журнала проброшена в окно',
     'typeof window.api.openLogsFolder === "function" && !!document.getElementById("open-logs")', (v) => v === true)
 
+  // Окно обрезки — редактор: кадр забирает всё место, а тонкие полосы сверху
+  // и снизу держат управление. Раньше это была обычная страница с кадром
+  // посреди неё, и замеры на пяти типовых экранах давали кадру 24–26% высоты
+  // окна на ноутбуке, а кнопку «Вырезать» не показывали ни на одном.
   const crop = await openPage('crop.html')
+
   await check(crop, 'crop.html', 'кнопка "Вырезать" заблокирована без файла',
     'document.getElementById("run").disabled', (v) => v === true)
+
+  // Главное, ради чего окно переделывали: ничего не должно уезжать за край.
+  await check(crop, 'crop.html', 'окно не прокручивается, «Вырезать» и настройки видны сразу', `
+    (() => {
+      const bottom = (id) => Math.round(document.getElementById(id).getBoundingClientRect().bottom)
+      return {
+        height: window.innerHeight,
+        doc: Math.round(document.body.scrollHeight),
+        run: bottom('run'),
+        settings: bottom('crop-form')
+      }
+    })()
+  `, (v) => v && v.doc <= v.height + 1 && v.run <= v.height && v.settings <= v.height)
+
   await check(crop, 'crop.html', 'по умолчанию выбран "Весь кадр", даже когда есть пресеты',
     `(() => {
        const buttons = [...document.querySelectorAll("[data-role=stakan] .option")]
        const pressed = buttons.filter(b => b.getAttribute('aria-pressed') === 'true')
        return { first: buttons[0].textContent, pressed: pressed.map(b => b.textContent) }
      })()`, (v) => v.first === 'Весь кадр' && v.pressed.length === 1 && v.pressed[0] === 'Весь кадр')
-  await check(crop, 'crop.html', 'без стакана, скорости и обрезки работа не запускается',
+
+  await check(crop, 'crop.html', 'без области, скорости и обрезки работа не запускается',
     `(() => {
        document.querySelector("[data-role=stakan] .option").click()
        const statusEl = document.getElementById('status')
        runCrop({ clipPath: 'C:\\\\nope.mp4', options: { stakanIndex: null, speedFactor: 1, trimStart: 0, trimEnd: 0 }, button: document.getElementById('run'), statusEl })
        return statusEl.textContent
      })()`, (v) => typeof v === 'string' && v.includes('Нечего делать'))
+
   await check(crop, 'crop.html', 'кнопки скорости строятся из настроек и всегда содержат «Обычная»',
     '[...document.querySelectorAll("[data-role=speed] .option")].map(b => b.textContent)',
     (v) => Array.isArray(v) && v[0] === 'Обычная'
       && v.length === new Set([1, ...config.clip.speedPresets]).size)
+
   await check(crop, 'crop.html', 'галка "Без звука" есть и по умолчанию снята',
     '!!document.getElementById("mute") && document.getElementById("mute").checked === false', (v) => v === true)
+
   await check(crop, 'crop.html', 'одна только галка "Без звука" уже считается работой',
     `(() => {
        document.getElementById('mute').checked = true
@@ -472,127 +500,97 @@ app.whenReady().then(async () => {
        document.getElementById('mute').checked = false
        return statusEl.textContent
      })()`, (v) => typeof v === 'string' && !v.includes('Нечего делать'))
-  await check(crop, 'crop.html', 'зона перетаскивания есть',
-    '!!document.getElementById("dropzone")', (v) => v === true)
+
+  await check(crop, 'crop.html', 'файл бросают прямо на кадр',
+    '!!document.getElementById("frame") && !document.getElementById("dropzone")', (v) => v === true)
   await check(crop, 'crop.html', 'getPathForFile проброшен в окно',
     'typeof window.api.getPathForFile', (v) => v === 'function')
 
-  // Идём тем же путём, что и пользователь: выбрать файл кнопкой, затем открыть
-  // превью. Раньше здесь видео подсовывалось напрямую в элемент, и из-за этого
-  // поиск границ не знал пути к файлу — проверка этого не замечала.
+  // Идём тем же путём, что и пользователь: выбрать файл кнопкой. Раньше здесь
+  // видео подсовывалось напрямую в элемент, и из-за этого поиск границ не знал
+  // пути к файлу — проверка этого не замечала.
   await check(crop, 'crop.html', 'видео открывается из окна и рамка ставится по размеру кадра', `
     new Promise((resolve) => {
-      const preview = document.querySelector('[data-role="preview"]')
-      const video = preview.querySelector('[data-role="video"]')
-      const box = preview.querySelector('[data-role="box"]')
+      const video = document.getElementById('video')
+      const box = document.getElementById('box')
       video.addEventListener('loadedmetadata', () => setTimeout(() => resolve({
         natural: [video.videoWidth, video.videoHeight],
         boxHidden: box.hidden,
         // Если CSP запретит присваивание style, ширина останется пустой
         boxWidth: box.style.width,
-        sizeText: preview.querySelector('[data-role="size"]').textContent
-      }), 150), { once: true })
+        sizeText: document.getElementById('size').textContent
+      }), 200), { once: true })
       video.addEventListener('error', () => resolve({ error: video.error && video.error.code }), { once: true })
       setTimeout(() => resolve({ error: 'timeout' }), 6000)
 
       document.getElementById('pick').click()
-      setTimeout(() => document.querySelector('[data-role="pick-visually"]').click(), 200)
     })
-  `, (v) => v && !v.error && v.natural[0] === 320 && v.boxHidden === false && /px$/.test(v.boxWidth || ''))
+  `, (v) => v && !v.error && v.natural[0] === 320 && v.boxHidden === false
+       && v.boxWidth.endsWith('px') && v.sizeText.includes('целиком'))
 
-  // Кадр не должен вылезать за отведённую долю высоты окна: иначе на большом
-  // экране ползунок перемотки и кнопки уедут за нижний край.
-  await check(crop, 'crop.html', 'высота кадра ограничена долей от высоты окна', `
+  // Кадр обязан целиком помещаться в отведённое место. Пока это считал сам
+  // браузер (ширина 100% + пропорции), на 3440x1440 он выходил высотой 1304
+  // при 1100 доступных, и низ картинки уезжал за край окна.
+  await check(crop, 'crop.html', 'кадр вписан в отведённое место целиком', `
     (() => {
-      const video = document.querySelector('[data-role="video"]')
-      const stage = document.querySelector('[data-role="stage"]')
+      const frame = document.getElementById('frame')
+      const stage = document.getElementById('stage')
+      const video = document.getElementById('video')
+      const box = stage.getBoundingClientRect()
       return {
-        limit: stage.style.maxWidth,
-        videoHeight: video.clientHeight,
-        allowed: Math.round(window.innerHeight * 0.62),
+        available: [frame.clientWidth, frame.clientHeight],
+        stage: [Math.round(box.width), Math.round(box.height)],
         // Коробка сцены обязана совпадать с картинкой — на этом держится
         // пересчёт координат рамки
-        sameWidth: stage.clientWidth === video.clientWidth
+        sameSize: stage.clientWidth === video.clientWidth && stage.clientHeight === video.clientHeight
       }
     })()
-  `, (v) => v && /px$/.test(v.limit || '') && v.videoHeight <= v.allowed + 1 && v.sameWidth === true)
+  `, (v) => v && v.sameSize === true
+       && v.stage[0] <= v.available[0] + 1 && v.stage[1] <= v.available[1] + 1
+       && (v.stage[0] >= v.available[0] - 1 || v.stage[1] >= v.available[1] - 1))
 
   // Нажатие на кнопку области должно показывать её прямо на кадре — иначе по
-  // названию "Стакан 2" не понять, что именно вырежется.
-  // Нажатие на кнопку области не должно разворачивать окно во весь экран:
-  // человек может просто выбирать, что резать, не собираясь ничего смотреть.
-  await check(crop, 'crop.html', 'выбор области сам по себе не открывает превью', `
+  // названию «Левый стакан» не понять, что именно вырежется.
+  await check(crop, 'crop.html', 'выбор области сразу виден на кадре', `
     (async () => {
-      const preview = document.querySelector('[data-role="preview"]')
-      const pick = document.querySelector('[data-role="pick-visually"]')
-      if (!preview.hidden) pick.click() // закрываем, если осталось открытым
+      const buttons = [...document.querySelectorAll("[data-role=stakan] .option")]
+      const size = () => document.getElementById('size').textContent
+
+      buttons[0].click() // «Весь кадр»
       await new Promise((resolve) => setTimeout(resolve, 200))
-
-      const buttons = [...document.querySelectorAll("[data-role=stakan] .option")]
-      const target = buttons.find(b => /Стакан/.test(b.textContent)) || buttons[1]
-      const closedBefore = preview.hidden
-      target.click()
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      return { closedBefore, stillClosed: preview.hidden }
-    })()
-  `, (v) => v && v.closedBefore === true && v.stillClosed === true)
-
-  // А когда превью открыто кнопкой — выбранная область сразу видна на кадре.
-  await check(crop, 'crop.html', 'при открытом превью выбор области виден на кадре', `
-    (async () => {
-      const preview = document.querySelector('[data-role="preview"]')
-      const pick = document.querySelector('[data-role="pick-visually"]')
-      const buttons = [...document.querySelectorAll("[data-role=stakan] .option")]
-      const size = () => document.querySelector('[data-role="size"]').textContent
-
-      buttons[0].click() // "Весь кадр"
-      if (preview.hidden) pick.click()
-      await new Promise((resolve) => setTimeout(resolve, 900))
       const whole = size()
 
-      const area = buttons.find(b => /Стакан/.test(b.textContent)) || buttons[1]
-      area.click()
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      return { whole, area: size(), label: area.textContent }
+      buttons[1].click()
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      return { whole, area: size(), label: buttons[1].textContent }
     })()
-  `, (v) => v && /^320x240/.test(v.whole || '') && /^160x/.test(v.area || ''))
+  `, (v) => v && v.whole.startsWith('320x240 целиком') && v.area.startsWith('160x'))
 
-  // Дорожка обрезки по времени: ручки должны писать в те же числовые поля,
-  // которые читает getOptions — иначе на дорожке одно, а вырежется другое.
-  await check(crop, 'crop.html', 'ручка на дорожке задаёт обрезку и та видна в форме', `
+  // Дорожка обрезки по времени: ручки должны менять то же значение, которое
+  // уходит в ffmpeg, — иначе на дорожке одно, а вырежется другое.
+  await check(crop, 'crop.html', 'ручка на дорожке задаёт обрезку и та уходит в параметры', `
     (() => {
-      const timeline = document.querySelector('[data-role="timeline"]')
+      const timeline = document.getElementById('timeline')
       const handle = timeline.querySelector('[data-trim="end"]')
-      const summary = document.querySelector('[data-role="trim-summary"]')
       const bounds = timeline.getBoundingClientRect()
-      const hiddenBefore = summary.hidden
+      const before = editor.getTrim()
       handle.setPointerCapture = () => {}
       handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: bounds.right, clientY: bounds.top + 10, bubbles: true, pointerId: 2 }))
       // Тянем ручку конца к середине дорожки — отрезаем половину клипа
       handle.dispatchEvent(new PointerEvent('pointermove', { clientX: bounds.left + bounds.width / 2, clientY: bounds.top + 10, bubbles: true, pointerId: 2 }))
       handle.dispatchEvent(new PointerEvent('pointerup', { clientX: bounds.left + bounds.width / 2, clientY: bounds.top + 10, bubbles: true, pointerId: 2 }))
-      return {
-        hiddenBefore,
-        summary: summary.hidden ? '' : summary.textContent,
-        label: document.querySelector('[data-role="trim-label"]').textContent
-      }
+      return { before, after: editor.getTrim(), label: document.getElementById('trim-label').textContent }
     })()
-  `, (v) => v && v.hiddenBefore === true && /с конца/.test(v.summary || '') && /Останется/.test(v.label || ''))
+  `, (v) => v && v.before.trimEnd === 0 && v.after.trimEnd > 0 && v.label.includes('Останется'))
 
   // После правки диапазона «плей» обязан показать его с начала. Раньше он
   // прыгал к началу только когда курсор оказывался снаружи, и получалось
   // непредсказуемо: то с начала выделения, то с середины.
   await check(crop, 'crop.html', 'после правки диапазона плей идёт с его начала', `
     (async () => {
-      const video = document.querySelector('[data-role="video"]')
-      const timeline = document.querySelector('[data-role="timeline"]')
-      const play = document.querySelector('[data-role="play"]')
+      const video = document.getElementById('video')
+      const timeline = document.getElementById('timeline')
       const bounds = timeline.getBoundingClientRect()
-
-      // Ставим курсор в середину клипа, потом двигаем левую ручку
-      timeline.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + bounds.width * 0.5, clientY: bounds.top + 5 }))
-      await new Promise((r) => setTimeout(r, 150))
-      const beforeDrag = video.currentTime
 
       const handle = timeline.querySelector('[data-trim="start"]')
       handle.setPointerCapture = () => {}
@@ -603,12 +601,12 @@ app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 150))
 
       // Уводим курсор в середину диапазона — плей всё равно должен начать с начала
-      video.currentTime = video.duration * 0.5
+      video.currentTime = video.duration * 0.3
       await new Promise((r) => setTimeout(r, 150))
-      play.click()
+      document.getElementById('play').click()
       const started = video.currentTime
       video.pause()
-      return { beforeDrag, started, expected: video.duration * 0.2 }
+      return { started, expected: video.duration * 0.2 }
     })()
   `, (v) => v && Math.abs(v.started - v.expected) < 0.3)
 
@@ -616,26 +614,93 @@ app.whenReady().then(async () => {
   // смотришь и режешь, не целясь ручкой в дорожку.
   await check(crop, 'crop.html', 'кнопки «[» и «]» режут по текущему кадру', `
     (async () => {
-      const video = document.querySelector('[data-role="video"]')
-      document.querySelector('[data-role="trim-reset"]').click()
+      const video = document.getElementById('video')
+      document.getElementById('trim-reset').click()
       await new Promise((r) => setTimeout(r, 150))
 
       video.currentTime = 2
       await new Promise((r) => setTimeout(r, 200))
-      document.querySelector('[data-role="mark-start"]').click()
+      document.getElementById('mark-start').click()
 
       video.currentTime = 6
       await new Promise((r) => setTimeout(r, 200))
-      document.querySelector('[data-role="mark-end"]').click()
+      document.getElementById('mark-end').click()
       await new Promise((r) => setTimeout(r, 150))
 
-      return document.querySelector('[data-role="trim-label"]').textContent
+      return { trim: editor.getTrim(), duration: video.duration }
     })()
-  `, (v) => typeof v === 'string' && /Останется 0:04/.test(v) && /0:02.0 с начала/.test(v))
+  `, (v) => v && Math.abs(v.trim.trimStart - 2) < 0.2 && Math.abs(v.duration - v.trim.trimEnd - 6) < 0.2)
+
+  // Выделение целиком: длина уже подошла, надо только сдвинуть момент.
+  await check(crop, 'crop.html', 'выделение двигается целиком, не меняя длины', `
+    (async () => {
+      const range = document.getElementById('range')
+      const timeline = document.getElementById('timeline')
+      const bounds = timeline.getBoundingClientRect()
+      const before = editor.getTrim()
+
+      range.setPointerCapture = () => {}
+      const from = bounds.left + bounds.width * 0.35
+      range.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: from, clientY: bounds.top + 5, pointerId: 4 }))
+      range.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: from + bounds.width * 0.15, clientY: bounds.top + 5, pointerId: 4 }))
+      range.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: from + bounds.width * 0.15, clientY: bounds.top + 5, pointerId: 4 }))
+      await new Promise((r) => setTimeout(r, 150))
+
+      const after = editor.getTrim()
+      const duration = document.getElementById('video').duration
+      return {
+        movedBy: after.trimStart - before.trimStart,
+        lengthBefore: duration - before.trimStart - before.trimEnd,
+        lengthAfter: duration - after.trimStart - after.trimEnd
+      }
+    })()
+  `, (v) => v && v.movedBy > 0.3 && Math.abs(v.lengthAfter - v.lengthBefore) < 0.3)
+
+  // Щелчок по выделению — всё-таки перемотка: выделение по умолчанию занимает
+  // всю дорожку и иначе перекрыло бы её целиком.
+  await check(crop, 'crop.html', 'щелчок по выделению перематывает, а не двигает его', `
+    (async () => {
+      const video = document.getElementById('video')
+      const range = document.getElementById('range')
+      const timeline = document.getElementById('timeline')
+      document.getElementById('trim-reset').click()
+      await new Promise((r) => setTimeout(r, 150))
+
+      const bounds = timeline.getBoundingClientRect()
+      const x = bounds.left + bounds.width * 0.5
+      const before = editor.getTrim()
+      range.setPointerCapture = () => {}
+      range.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: bounds.top + 5, pointerId: 5 }))
+      range.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: bounds.top + 5, pointerId: 5 }))
+      await new Promise((r) => setTimeout(r, 200))
+      return { at: video.currentTime, expected: video.duration * 0.5, trim: editor.getTrim(), before }
+    })()
+  `, (v) => v && Math.abs(v.at - v.expected) < 0.4 && v.trim.trimStart === v.before.trimStart)
+
+  await check(crop, 'crop.html', 'повтор по кругу не останавливает клип в конце выделения', `
+    (async () => {
+      const video = document.getElementById('video')
+      const loop = document.getElementById('loop')
+      document.getElementById('trim-reset').click()
+      await new Promise((r) => setTimeout(r, 150))
+
+      loop.click()
+      const pressed = loop.getAttribute('aria-pressed')
+      video.currentTime = Math.max(0, video.duration - 0.4)
+      const started = video.play()
+      if (started && started.catch) started.catch(() => {})
+      await new Promise((r) => setTimeout(r, 900))
+      const stillPlaying = !video.paused
+      const at = video.currentTime
+      video.pause()
+      loop.click()
+      return { pressed, stillPlaying, at, duration: video.duration }
+    })()
+  `, (v) => v && v.pressed === 'true' && v.stillPlaying === true && v.at < v.duration - 0.2)
 
   await check(crop, 'crop.html', 'пробел запускает и останавливает воспроизведение', `
     (async () => {
-      const video = document.querySelector('[data-role="video"]')
+      const video = document.getElementById('video')
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))
       await new Promise((r) => setTimeout(r, 250))
       const playing = !video.paused
@@ -646,7 +711,7 @@ app.whenReady().then(async () => {
   `, (v) => v && v.playing === true && v.stopped === true)
 
   await check(crop, 'crop.html', 'текущее время видно рядом с дорожкой',
-    'document.querySelector("[data-role=time]").textContent',
+    'document.getElementById("time").textContent',
     // Без регулярного выражения намеренно: слэш внутри него — ровно то, на чём
     // этот файл уже один раз перестал разбираться.
     (v) => typeof v === 'string' && v.includes(' / ') && v.split(' / ').every((part) => /^\d+:\d\d?\.\d$/.test(part.trim())))
@@ -654,12 +719,12 @@ app.whenReady().then(async () => {
   await check(crop, 'crop.html', 'числовых полей обрезки больше нет',
     '!document.getElementById("trim-start") && !document.getElementById("trim-end")', (v) => v === true)
 
-  // Превью должно звучать: раньше видео стояло с атрибутом muted, и звук при
+  // Кадр должен звучать: раньше видео стояло с атрибутом muted, и звук при
   // проигрывании не шёл вовсе.
-  await check(crop, 'crop.html', 'звук в превью включён и выключается кнопкой', `
+  await check(crop, 'crop.html', 'звук включён и выключается кнопкой', `
     (() => {
-      const video = document.querySelector('[data-role="video"]')
-      const button = document.querySelector('[data-role="sound"]')
+      const video = document.getElementById('video')
+      const button = document.getElementById('sound')
       const initial = video.muted
       button.click()
       const afterClick = video.muted
@@ -674,20 +739,28 @@ app.whenReady().then(async () => {
        return el ? { value: el.value, hasPlaceholder: el.placeholder.length > 0 } : null
      })()`, (v) => v && v.value === '' && v.hasPlaceholder === true)
 
+  // Рамка идёт последней: она отменяет выбор области кнопкой, и проверять
+  // после неё выбор кнопками было бы уже не на чем.
   await check(crop, 'crop.html', 'рамка тянется мышью и пересчитывается в пиксели кадра', `
     (() => {
-      const preview = document.querySelector('[data-role="preview"]')
-      const box = preview.querySelector('[data-role="box"]')
+      const box = document.getElementById('box')
       const handle = box.querySelector('[data-handle="e"]')
       const before = box.style.width
-      const down = new PointerEvent('pointerdown', { clientX: 300, clientY: 100, bubbles: true, pointerId: 1 })
+      const bounds = box.getBoundingClientRect()
       handle.setPointerCapture = () => {}
-      handle.dispatchEvent(down)
-      handle.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, clientY: 100, bubbles: true, pointerId: 1 }))
-      handle.dispatchEvent(new PointerEvent('pointerup', { clientX: 200, clientY: 100, bubbles: true, pointerId: 1 }))
-      return { before, after: box.style.width, size: preview.querySelector('[data-role="size"]').textContent }
+      handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: bounds.right, clientY: bounds.top + 10, bubbles: true, pointerId: 1 }))
+      handle.dispatchEvent(new PointerEvent('pointermove', { clientX: bounds.right - 60, clientY: bounds.top + 10, bubbles: true, pointerId: 1 }))
+      handle.dispatchEvent(new PointerEvent('pointerup', { clientX: bounds.right - 60, clientY: bounds.top + 10, bubbles: true, pointerId: 1 }))
+      return {
+        before,
+        after: box.style.width,
+        size: document.getElementById('size').textContent,
+        rect: editor.getRect(),
+        pressed: [...document.querySelectorAll("[data-role=stakan] .option")].filter(b => b.getAttribute('aria-pressed') === 'true').length
+      }
     })()
-  `, (v) => v && v.before !== v.after && /^\d+x\d+ из 320x240$/.test(v.size || ''))
+  `, (v) => v && v.before !== v.after && v.size.includes(' из 320x240')
+       && v.rect.sourceWidth === 320 && v.pressed === 0)
 
   // Помощник первой настройки. Главное, что здесь может молча сломаться:
   // шаги перестают переключаться, проверки показывают не тот исход, а данные

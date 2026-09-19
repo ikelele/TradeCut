@@ -9,8 +9,6 @@ contextBridge.exposeInMainWorld('api', {
   cropClip: (clipPath, options) => ipcRenderer.invoke('crop:run', clipPath, options),
   openFolder: (filePath) => ipcRenderer.invoke('shell:reveal', filePath),
   closeWindow: () => ipcRenderer.send('window:close'),
-  // Развернуть окно на время превью клипа и вернуть обратно при закрытии
-  setPreviewMode: (enabled) => ipcRenderer.send('window:preview-mode', enabled),
 
   // Путь перетащенного в окно файла. В современных Electron у File больше нет
   // свойства .path — путь отдаёт только webUtils, и только из preload.
@@ -59,13 +57,6 @@ contextBridge.exposeInMainWorld('api', {
   // Короткий повтор ради кадра: на первом запуске клипов ещё нет, а настроить
   // области можно только по картинке. Открывает окно обрезки с этим файлом.
   saveSetupReplay: () => ipcRenderer.invoke('setup:save-replay'),
-  // Крестик окна при открытом превью: основной процесс просит закрыть превью
-  // вместо самого окна.
-  onPreviewDismiss: (listener) => {
-    const handler = () => listener()
-    ipcRenderer.on('preview:dismiss', handler)
-    return () => ipcRenderer.off('preview:dismiss', handler)
-  },
   openLogsFolder: () => ipcRenderer.send('logs:open'),
   pickFolder: (currentPath) => ipcRenderer.invoke('dialog:pick-folder', currentPath),
 

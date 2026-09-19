@@ -444,7 +444,7 @@ function main() {
     }
 
     // Принимает как один пресет, так и целый набор: кнопка "Сохранить все
-    // области" в превью отдаёт сразу все найденные стаканы.
+    // области" в разметке отдаёт сразу все найденные стаканы.
     ipcMain.handle('crop-presets:save', (_event, incoming) => {
       const presets = (Array.isArray(incoming) ? incoming : [incoming])
         .map((preset) => ({ ...preset, name: String((preset && preset.name) || '').trim() }))
@@ -487,66 +487,6 @@ function main() {
       if (win) win.close()
     })
 
-    // Окно обрезки под форму сделано узким, а превью клипа в нём разглядывать
-    // невозможно. На время превью разворачиваем окно почти на весь экран и
-    // возвращаем прежний размер, когда превью закрыли.
-    const boundsBeforePreview = new Map() // webContents.id -> прежние границы
-    // Пока превью открыто, окно развёрнуто почти во весь экран и выглядит как
-    // отдельное "окно выделения". Крестик в нём закрывал всё окно разом —
-    // хотя человек ожидал вернуться к обычному виду обрезки. Поэтому первый
-    // крестик просто закрывает превью; второй, уже в обычном окне, закроет
-    // окно, как и положено.
-    const previewCloseGuards = new Map()
-    // Размер меняем одним движением. Самодельная анимация через несколько
-    // setBounds подряд выглядела дёргано: окно перерисовывается рывками, это
-    // хуже честного мгновенного перехода. Своей анимации у Windows для
-    // setBounds нет — флаг animate работает только на macOS.
-
-    ipcMain.on('window:preview-mode', (event, enabled) => {
-      const win = BrowserWindow.fromWebContents(event.sender)
-      if (!win || win.isDestroyed()) return
-      const key = event.sender.id
-
-      if (enabled) {
-        if (boundsBeforePreview.has(key)) return // уже развёрнуто
-        boundsBeforePreview.set(key, win.getBounds())
-
-        const guard = (event) => {
-          event.preventDefault()
-          win.webContents.send('preview:dismiss')
-        }
-        win.on('close', guard)
-        previewCloseGuards.set(key, guard)
-
-        // Окно могут закрыть, не выходя из превью — тогда возвращать размер
-        // уже некуда, и запись о нём просто копилась бы.
-        win.once('closed', () => {
-          boundsBeforePreview.delete(key)
-          previewCloseGuards.delete(key)
-        })
-        const { workArea } = screen.getDisplayMatching(win.getBounds())
-        const margin = 0.04
-        win.setBounds({
-          x: Math.round(workArea.x + workArea.width * margin),
-          y: Math.round(workArea.y + workArea.height * margin),
-          width: Math.round(workArea.width * (1 - margin * 2)),
-          height: Math.round(workArea.height * (1 - margin * 2))
-        })
-        return
-      }
-
-      const guard = previewCloseGuards.get(key)
-      if (guard) {
-        win.off('close', guard)
-        previewCloseGuards.delete(key)
-      }
-
-      const previous = boundsBeforePreview.get(key)
-      boundsBeforePreview.delete(key)
-      // Развёрнутое вручную окно оставляем как есть: пользователь сам решил,
-      // каким ему быть, и схлопывать его обратно было бы неожиданно.
-      if (previous && !win.isMaximized()) win.setBounds(previous)
-    })
   }
 
   // Диагностика отрисовки: без неё "окно открылось пустым" не отличить от

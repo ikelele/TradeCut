@@ -174,6 +174,7 @@ document.getElementById('restart').addEventListener('click', async () => {
 const listEl = document.getElementById('trade-list')
 const clipsStatusEl = document.getElementById('clips-status')
 const runButton = document.getElementById('run')
+const editorButton = document.getElementById('open-editor')
 const cropForm = createCropForm(document.getElementById('crop-form'))
 
 let trades = []
@@ -188,6 +189,7 @@ function renderList() {
     empty.textContent = 'Сделок пока нет'
     listEl.appendChild(empty)
     runButton.disabled = true
+    editorButton.disabled = true
     return
   }
 
@@ -220,6 +222,7 @@ function renderList() {
   }
 
   runButton.disabled = selectedClipPath === null
+  editorButton.disabled = selectedClipPath === null
 }
 
 function setTrades(next) {
@@ -239,4 +242,12 @@ setupFileDrop(document.getElementById('dropzone'), (filePath) => {
 runButton.addEventListener('click', () => {
   if (!selectedClipPath) return
   runCrop({ clipPath: selectedClipPath, options: cropForm.getOptions(), button: runButton, statusEl: clipsStatusEl, form: cropForm })
+})
+
+// Посмотреть кадр, обвести область мышью или отрезать по времени — это всё
+// делается в редакторе. Держать его ещё и здесь, под списком сделок и
+// вкладками, значит отдавать кадру остатки места: замеры показали 24% высоты
+// окна на ноутбуке.
+editorButton.addEventListener('click', () => {
+  if (selectedClipPath) window.api.openCropWindowFor(selectedClipPath)
 })

@@ -125,32 +125,30 @@ app.whenReady().then(async () => {
     })
   `)
   await shoot('help.html', { width: 680, height: 720 })
-  await shoot('crop.html', { width: 620, height: 700 })
+  await shoot('crop.html', { width: 1100, height: 760 })
 
-  // Сетка областей: делим кадр на шесть частей
-  await shoot('crop.html', { width: 1100, height: 900 }, `
+  // Разметка областей: делим кадр на шесть частей
+  await shoot('areas.html', { width: 1100, height: 760 }, `
     new Promise((resolve) => {
-      document.getElementById('pick').click()
-      setTimeout(() => {
-        document.querySelector('[data-role="pick-visually"]').click()
-        setTimeout(() => {
-          const input = document.querySelector('[data-role="grid-count"]')
-          input.value = '6'
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-          setTimeout(resolve, 300)
-        }, 900)
-      }, 300)
+      const input = document.getElementById('count')
+      const apply = () => {
+        input.value = '6'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        setTimeout(resolve, 300)
+      }
+      const video = document.getElementById('video')
+      if (video.videoWidth) return apply()
+      video.addEventListener('loadedmetadata', () => setTimeout(apply, 200), { once: true })
+      setTimeout(resolve, 4000)
     })
   `)
 
-  // Окно обрезки с открытым превью — основной рабочий вид
-  await shoot('crop.html', { width: 1100, height: 900 }, `
+  // Окно обрезки с открытым клипом — основной рабочий вид
+  await shoot('crop.html', { width: 1100, height: 760 }, `
     new Promise((resolve) => {
+      document.getElementById('video').addEventListener('loadedmetadata', () => setTimeout(resolve, 400), { once: true })
       document.getElementById('pick').click()
-      setTimeout(() => {
-        document.querySelector('[data-role="pick-visually"]').click()
-        setTimeout(resolve, 900)
-      }, 300)
+      setTimeout(resolve, 4000)
     })
   `)
 

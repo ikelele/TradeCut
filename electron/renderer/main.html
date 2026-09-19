@@ -2,9 +2,9 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <!-- media-src нужен для превью клипа во вкладке "Клипы": без него
-       default-src 'none' запрещает загрузку видео в окно. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' file:">
+  <!-- Видео в этом окне больше не показывается: кадр смотрят и режут в
+       отдельном окне редактора, поэтому media-src здесь не нужен. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'">
   <link rel="stylesheet" href="app.css">
   <title>TradeCut</title>
 </head>
@@ -61,6 +61,7 @@
 
       <div class="actions">
         <button type="button" class="primary" id="run" disabled>Вырезать</button>
+        <button type="button" class="secondary" id="open-editor" disabled>Открыть в редакторе...</button>
       </div>
 
       <div class="status" id="clips-status"></div>
@@ -299,7 +300,6 @@
 
   </div>
 
-  <script src="cropPreview.js"></script>
   <script src="cropForm.js"></script>
   <script src="main.js"></script>
   <script src="settings.js"></script>

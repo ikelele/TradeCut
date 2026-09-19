@@ -63,14 +63,22 @@ notes.push(`каналов IPC: ${requested.length}, все обработаны
 // ── 3. getElementById из окна должен существовать в его разметке ───────────
 // Настройки и список сделок живут вкладками главного окна, поэтому их
 // скрипты проверяются против main.html.
-const pageOfScript = { 'settings.js': 'main.html', 'crop.js': 'crop.html', 'main.js': 'main.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
+const pageOfScript = {
+  'settings.js': 'main.html',
+  'crop.js': 'crop.html',
+  'cropEditor.js': 'crop.html',
+  'areas.js': 'areas.html',
+  'main.js': 'main.html',
+  'help.js': 'help.html',
+  'setup.js': 'setup.html'
+}
 for (const [script, page] of Object.entries(pageOfScript)) {
   if (!rendererJs.includes(script) || !rendererHtml.includes(page)) continue
   const source = read('electron', 'renderer', script)
   const html = read('electron', 'renderer', page)
-  // Общая панель обрезки строит свою разметку сама — её id ищем и в ней
+  // Общая панель настроек обрезки строит свою разметку сама — её id ищем и в ней
   const extra = page === 'crop.html' || page === 'main.html'
-    ? read('electron', 'renderer', 'cropForm.js') + read('electron', 'renderer', 'cropPreview.js')
+    ? read('electron', 'renderer', 'cropForm.js')
     : ''
   const available = new Set([...matchAll(html + extra, /id="([\w-]+)"/g)])
   for (const id of unique(matchAll(source, /getElementById\('([\w-]+)'\)/g))) {

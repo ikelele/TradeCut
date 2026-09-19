@@ -1,30 +1,45 @@
-const dropzone = document.getElementById('dropzone')
+// Окно обрезки: редактор кадра сверху, настройки строкой снизу.
+
 const fileNameEl = document.getElementById('file-name')
 const statusEl = document.getElementById('status')
 const runButton = document.getElementById('run')
-const closeButton = document.getElementById('close')
 const pickButton = document.getElementById('pick')
-
-const form = createCropForm(document.getElementById('crop-form'))
+const frameEl = document.getElementById('frame')
 
 let clipPath = null
+
+// Редактор создаётся раньше панели: панель сразу при сборке отмечает «Весь
+// кадр» и через onAreaChosen зовёт редактор показать эту область.
+const editor = createCropEditor({
+  onRectChange: (rect) => form.setManualRect(rect),
+  // Кадр загрузился — показываем на нём ту область, что уже выбрана кнопкой.
+  // Иначе выбранный до открытия файла «Стакан 2» молча превращался бы в
+  // «весь кадр».
+  onReady: () => editor.showArea(form.getAreaRect)
+})
+
+const form = createCropForm(document.getElementById('crop-form'), {
+  onAreaChosen: (getRect) => { if (editor.hasFrame()) editor.showArea(getRect) }
+})
 
 function setClipPath(filePath) {
   if (!filePath) return
   clipPath = filePath
   form.setClipPath(filePath)
   fileNameEl.textContent = filePath
-  fileNameEl.className = 'picked'
+  fileNameEl.title = filePath
   runButton.disabled = false
   statusEl.className = 'status'
   statusEl.textContent = ''
+  editor.open(filePath)
 }
 
 // Файл мог быть передан аргументом (перетащили на сам .exe) — тогда он уже
 // известен основному процессу и окно просто забирает его при открытии.
 window.api.getDroppedFile().then(setClipPath)
 
-setupFileDrop(dropzone, setClipPath)
+// Бросать файл можно прямо на кадр — на то место, где он и появится.
+setupFileDrop(frameEl, setClipPath)
 
 pickButton.addEventListener('click', async () => {
   setClipPath(await window.api.pickVideoFile())
@@ -32,7 +47,7 @@ pickButton.addEventListener('click', async () => {
 
 runButton.addEventListener('click', () => {
   if (!clipPath) return
-  runCrop({ clipPath, options: form.getOptions(), button: runButton, statusEl, form })
+  // Обрезка по времени живёт в редакторе, остальное — в панели настроек.
+  const options = { ...form.getOptions(), ...editor.getTrim() }
+  runCrop({ clipPath, options, button: runButton, statusEl, form })
 })
-
-closeButton.addEventListener('click', () => window.api.closeWindow())
