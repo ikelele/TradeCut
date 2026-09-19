@@ -241,6 +241,69 @@ app.whenReady().then(async () => {
 
   const settings = mainWin
   await check(settings, 'main.html (настройки)', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
+  // Подсказки: короткое на виду, подробное под значком. Раньше в настройках
+  // было 5185 символов пояснительного текста на 22 поля — стена, которую никто
+  // не читает.
+  await check(settings, 'main.html (настройки)', 'длинные объяснения убраны под значок «?»', `
+    (() => {
+      showTab('settings')
+      document.querySelector('.advanced').open = true
+      const hints = [...document.querySelectorAll('[data-panel=settings] .field-hint')]
+      const visible = hints.map((hint) => {
+        const clone = hint.cloneNode(true)
+        for (const holder of clone.querySelectorAll('.hint-mark-holder')) holder.remove()
+        return clone.textContent.trim()
+      }).filter((text) => text.length > 0)
+      return {
+        marks: document.querySelectorAll('[data-panel=settings] .hint-mark').length,
+        longest: Math.max(...visible.map((text) => text.length)),
+        total: visible.reduce((sum, text) => sum + text.length, 0)
+      }
+    })()
+  `, (v) => v && v.marks >= 20 && v.longest <= 90 && v.total < 1600)
+
+  // Панельки обязаны быть невидимы, пока их не открыли. Атрибута hidden для
+  // этого мало: собственное правило display перебивает его, и все объяснения
+  // висели на экране разом, одно поверх другого.
+  await check(settings, 'main.html (настройки)', 'панельки закрыты, открывается ровно одна', `
+    (async () => {
+      showTab('settings')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const seen = () => [...document.querySelectorAll('[data-panel=settings] .hint-panel')]
+        .filter((panel) => panel.getClientRects().length > 0).length
+      const atStart = seen()
+
+      const marks = [...document.querySelectorAll('[data-panel=settings] .hint-mark')]
+      marks[0].click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const afterFirst = seen()
+
+      marks[1].click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const afterSecond = seen()
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      return { atStart, afterFirst, afterSecond, afterEscape: seen() }
+    })()
+  `, (v) => v && v.atStart === 0 && v.afterFirst === 1 && v.afterSecond === 1 && v.afterEscape === 0)
+
+  // Значок стоит рядом с подписями, в том числе внутри <label> у галок:
+  // щелчок по нему не должен переключать саму галку.
+  await check(settings, 'main.html (настройки)', 'щелчок по значку не трогает поля', `
+    (async () => {
+      showTab('settings')
+      const box = document.getElementById('auto-crop-detect')
+      const before = box.checked
+      const mark = box.closest('.field').querySelector('.hint-mark')
+      mark.click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const after = box.checked
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      return { before, after, hasMark: !!mark }
+    })()
+  `, (v) => v && v.hasMark === true && v.before === v.after)
+
   await check(settings, 'main.html (настройки)', 'поле адреса OBS заполнено из конфига',
     'document.getElementById("obs-url").value', (v) => typeof v === 'string' && v.length > 0)
   await check(settings, 'main.html (настройки)', 'чекбокс объединения сделок отражает конфиг',

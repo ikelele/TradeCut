@@ -107,6 +107,59 @@ legend {
   letter-spacing: 0.04em;
 }
 
+/* ── Значок «?»: подробное объяснение по запросу ───────────────────────── */
+
+.hint-mark-holder {
+  position: relative;
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+.hint-mark {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text-dim);
+  font: 600 10px/1 "Segoe UI", system-ui, sans-serif;
+  cursor: help;
+  vertical-align: text-top;
+}
+
+.hint-mark:hover,
+.hint-mark[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* display: block нужен — панелька лежит в <span>. Но он перебивает атрибут
+   hidden: тот в браузере сделан правилом [hidden] { display: none }, и
+   авторское правило оказывается сильнее. Без строчки ниже все панельки
+   висели на экране сразу, одна поверх другой. */
+.hint-panel[hidden] { display: none; }
+
+.hint-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: block;
+  width: max-content;
+  max-width: 340px;
+  padding: 9px 11px;
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  /* Из панельки копируют пути и названия пунктов меню */
+  user-select: text;
+  cursor: auto;
+}
+
 .field-hint {
   margin: 4px 0 0;
   font-size: 11px;
