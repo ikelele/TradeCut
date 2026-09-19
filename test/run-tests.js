@@ -1050,6 +1050,45 @@ function testDetectAreaInFrame() {
 }
 
 // Голосование по нескольким кадрам: один кадр мог попасть на моргание.
+// Постоянно цветной элемент панели не должен считаться маркером позиции.
+//
+// Так программа и обрезала не тот стакан у стороннего пользователя: области он
+// разметил во всю высоту кадра, а внизу экрана у него отдельный ряд графиков.
+// Нижней полосой области оказались свечи, и самый цветной график выигрывал
+// уверенно — «Стакан 4, 5.0%» при нуле у остальных.
+//
+// Отличие маркера от мебели в том, что маркер ЗАГОРАЕТСЯ: в начале клипа
+// позиция ещё не открыта.
+function testDetectAreaIgnoresAlwaysColoredPanel() {
+  const { detectAreaInFrame, scoreArea } = require('../src/tradeAreaDetect')
+  const width = 1200
+  const height = 600
+  const areas = makeAreas(width, height)
+
+  // В четвёртой колонке цветная полоса есть ВСЕГДА — и до сделки тоже
+  const before = makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }])
+  const during = makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }])
+
+  const baseline = new Map()
+  for (const area of areas) baseline.set(area.name, scoreArea(before, area))
+
+  const verdict = detectAreaInFrame(during, areas, baseline)
+  assert.strictEqual(verdict.confident, false,
+    `постоянно цветная панель не должна считаться сделкой: ${JSON.stringify(verdict)}`)
+
+  // А та, что загорелась, — должна, даже если цветного в ней меньше
+  const lit = makeFrame(width, height, [
+    { index: 3, fromRatio: 0.96 },
+    { index: 1, fromRatio: 0.96 }
+  ])
+  const second = detectAreaInFrame(lit, areas, baseline)
+  assert.strictEqual(second.name, 'Стакан 2',
+    `загоревшуюся полосу должно находить: ${JSON.stringify(second)}`)
+  assert.strictEqual(second.confident, true)
+
+  console.log('[OK] testDetectAreaIgnoresAlwaysColoredPanel')
+}
+
 function testPickAreaByVotes() {
   const { pickAreaByVotes } = require('../src/tradeAreaDetect')
 
@@ -1653,6 +1692,7 @@ async function main() {
   await testCropClipMuteDropsAudio()
   await testMergedPartsDeletedByDefault()
   testDetectAreaInFrame()
+  testDetectAreaIgnoresAlwaysColoredPanel()
   testPickAreaByVotes()
   await testAutoCropsDieWithTheirClips()
   await testMergedPartsSurviveAlreadyDeletedClips()

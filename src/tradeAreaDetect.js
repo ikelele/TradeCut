@@ -28,6 +28,23 @@ const { resolveCropRect } = require('./cropRect')
 // и то же — те же строки ленты, тот же кусок графика, — и панель с позицией на
 // своём уровне отрывается от соседей в десятки раз. Это второй признак.
 //
+// И третье, без чего первый признак опасен. Он смотрит в нижнюю полосу
+// ОБЛАСТИ, молча считая, что низ области — это низ панели. У Vataga так и
+// есть. А у стороннего пользователя внизу экрана отдельный ряд графиков, и
+// области, размеченные во всю высоту кадра, кончаются на нём. Нижней полосой
+// там оказались свечи, и самый цветной график выиграл уверенно: «Стакан 4,
+// 5.0%» при нуле у остальных — то есть программа бодро вырезала не тот
+// стакан. Молчание было бы лучше.
+//
+// Отличить маркер от мебели можно, ничего не зная про раскладку: **маркер
+// ЗАГОРАЕТСЯ**. В начале клипа позиция ещё не открыта — там запас до входа, —
+// значит всё, что там уже горит, к сделке отношения не имеет. Поэтому из
+// оценки каждой области вычитается её же оценка в начале клипа.
+//
+// Замерено: у Vataga нужная область прибавляет 13-14%, у стороннего
+// пользователя лучшая прибавка 0.0% и 0.9% — то есть не прибавляет никто, и
+// ответа честно нет.
+//
 // Второй признак ЗАПАСНОЙ, а не равный. На 28 записях Vataga, где первый
 // уверен, второй спорил с ним в семи случаях — если дать им равные голоса,
 // проверенные ответы превратятся в ничью. Поэтому порядок такой: отвечает
@@ -55,12 +72,8 @@ const BAND_RATIO = 0.04
 const SKIP_TOP_RATIO = 0.03
 // Чтобы деление на почти ноль не давало бесконечный отрыв
 const SHARE_FLOOR = 0.002
-// Полосу бледнее этого за маркер не считаем
-const MIN_BAND_SHARE = 0.01
-// Во сколько раз лидер должен опережать вторую панель, чтобы второй признак
-// вообще подал голос. Замерено: у ошибочного ответа отрыв был в 1.05 раза, у
-// верных — от 1.4 до 5.4.
-const STANDOUT_GATE = 1.3
+// Насколько должно ПРИБАВИТЬСЯ цветного в полосе, чтобы считать это маркером
+const MIN_BAND_DELTA = 0.01
 
 // Серый интерфейс терминала никогда так не выглядит, а красная и зелёная
 // плашки — всегда.
@@ -112,10 +125,22 @@ function shareIn(frame, fromX, toX, fromY, toY) {
   return vivid / pixels
 }
 
-// Второй признак: какая область отрывается от соседей НА ОДНОЙ С НИМИ ВЫСОТЕ.
-// Возвращает { name, margin, runnerUp, confident } либо null.
-function detectAreaByStandOut(frame, areas) {
+// Второй признак: в какой области ЧТО-ТО ПОЯВИЛОСЬ на своей высоте.
+//
+// Сравниваем каждую полосу с её же видом в начале клипа, до входа. Сравнение
+// идёт на одной высоте и внутри одного кадра, поэтому не зависит ни от темы,
+// ни от того, что именно рисует терминал: у всех панелей на этом уровне
+// нарисовано одно и то же, и постоянная мебель вычитается сама.
+//
+// Без кадра «до» этот признак не работает: он брал самую цветную полосу и на
+// записях стороннего пользователя показывал то 10-й стакан, то 4-й, то 6-й —
+// просто по тому, где ярче свечи. С вычитанием обе его записи определяются
+// единогласно и верно.
+//
+// Возвращает { name, delta, runnerUp, confident } либо null.
+function detectAreaByStandOut(frame, areas, before) {
   if (!Array.isArray(areas) || areas.length < 2) return null
+  if (!before || before.width !== frame.width || before.height !== frame.height) return null
 
   const rects = []
   for (const area of areas) {
@@ -130,33 +155,39 @@ function detectAreaByStandOut(frame, areas) {
   const best = new Map()
 
   for (let top = from; top + step <= frame.height; top += step) {
-    const shares = rects
+    const deltas = rects
       .map((item) => ({
         name: item.name,
         value: shareIn(frame, item.rect.x, item.rect.x + item.rect.width, top, top + step)
+          - shareIn(before, item.rect.x, item.rect.x + item.rect.width, top, top + step)
       }))
       .sort((a, b) => b.value - a.value)
 
-    if (shares[0].value < MIN_BAND_SHARE) continue
-    const margin = shares[0].value / Math.max(shares[1].value, SHARE_FLOOR)
-    const known = best.get(shares[0].name)
-    if (known === undefined || margin > known) best.set(shares[0].name, margin)
+    if (deltas[0].value < MIN_BAND_DELTA) continue
+    // Отрыв считаем разностью, а не отношением: доли тут близки к нулю, и
+    // отношение от такого взрывается на пустом месте.
+    const margin = deltas[0].value - Math.max(0, deltas[1].value)
+    const known = best.get(deltas[0].name)
+    if (known === undefined || margin > known) best.set(deltas[0].name, margin)
   }
 
   const ranked = [...best.entries()].sort((a, b) => b[1] - a[1])
   if (ranked.length === 0) return null
-  const runnerUp = ranked.length > 1 ? ranked[1][1] : 0
   return {
     name: ranked[0][0],
-    margin: ranked[0][1],
-    runnerUp,
-    confident: ranked.length < 2 || ranked[0][1] >= runnerUp * STANDOUT_GATE
+    delta: ranked[0][1],
+    runnerUp: ranked.length > 1 ? ranked[1][1] : 0,
+    // Решает не порог, а голосование по кадрам: разошлись кадры — ответа нет.
+    confident: true
   }
 }
 
 // Разбор одного кадра: какая область "горит" и насколько уверенно.
 // Возвращает { name, score, runnerUp, confident } либо null, если сравнивать не с чем.
-function detectAreaInFrame(frame, areas) {
+// baseline — оценки тех же областей на кадре ДО входа (Map: имя -> доля).
+// Без него сравниваются сами оценки, и тогда постоянно цветной элемент панели
+// неотличим от загоревшегося маркера позиции.
+function detectAreaInFrame(frame, areas, baseline) {
   // Одна область — выбирать не из чего, и "определение" было бы самообманом.
   if (!Array.isArray(areas) || areas.length < 2) return null
 
@@ -164,18 +195,23 @@ function detectAreaInFrame(frame, areas) {
   for (const area of areas) {
     const rect = resolveCropRect(area, frame.width, frame.height)
     if (!rect) continue // область не ложится на этот кадр — пропускаем
-    scored.push({ name: area.name, score: scoreArea(frame, rect) })
+    const score = scoreArea(frame, rect)
+    const was = baseline && baseline.has(area.name) ? baseline.get(area.name) : 0
+    // Ниже нуля не опускаем: подросшая на кадре мебель не должна уводить
+    // область в минус и подсаживать соседей.
+    scored.push({ name: area.name, score, growth: Math.max(0, score - was) })
   }
   if (scored.length < 2) return null
 
-  scored.sort((a, b) => b.score - a.score)
+  scored.sort((a, b) => b.growth - a.growth || b.score - a.score)
   const [best, second] = scored
 
   return {
     name: best.name,
     score: best.score,
-    runnerUp: second.score,
-    confident: best.score >= MIN_SCORE && best.score >= second.score * MIN_MARGIN
+    growth: best.growth,
+    runnerUp: second.growth,
+    confident: best.growth >= MIN_SCORE && best.growth >= second.growth * MIN_MARGIN
   }
 }
 
@@ -196,6 +232,13 @@ function pickAreaByVotes(results) {
   if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return null
   return ranked[0][0]
 }
+
+// Насколько от начала клипа брать кадр «до входа». Самый первый кадр брать
+// нельзя: у записи с рабочего стола он часто ещё не отрисован.
+const BASELINE_AT_SEC = 0.4
+// Короче этого клип целиком помещается в запас по краям, и «начала до входа»
+// в нём может не быть вовсе — тогда сравнивать не с чем.
+const MIN_BASELINE_CLIP_SEC = 2
 
 // Моменты, по которым смотрим клип. Не у самых краёв: в начале позиция ещё не
 // открыта, в конце уже закрыта, и полосы там может не быть.
@@ -227,14 +270,34 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   const size = await probeVideoSize(clipPath)
   const duration = await probeDurationSeconds(clipPath)
 
+  // Кадр до входа: с ним сравниваем, чтобы отличить загоревшийся маркер от
+  // того, что в панели горело всегда.
+  let baseline = null
+  let earlyFrame = null
+  if (duration >= MIN_BASELINE_CLIP_SEC) {
+    try {
+      const early = await grabFrameRgba(clipPath, BASELINE_AT_SEC, size)
+      earlyFrame = early
+      baseline = new Map()
+      for (const area of areas) {
+        const rect = resolveCropRect(area, early.width, early.height)
+        if (rect) baseline.set(area.name, scoreArea(early, rect))
+      }
+    } catch (error) {
+      log(`Кадр до входа не достался: ${error.message}. Сравниваю без него.`)
+      baseline = null
+      earlyFrame = null
+    }
+  }
+
   const results = []
   const backup = []
   for (const at of SAMPLE_POINTS) {
     const timeSec = duration * at
     try {
       const frame = await grabFrameRgba(clipPath, timeSec, size)
-      results.push(detectAreaInFrame(frame, areas))
-      backup.push(detectAreaByStandOut(frame, areas))
+      results.push(detectAreaInFrame(frame, areas, baseline))
+      backup.push(detectAreaByStandOut(frame, areas, earlyFrame))
     } catch (error) {
       log(`Кадр на ${Math.round(timeSec)}с не разобрался: ${error.message}`)
       results.push(null)
@@ -243,7 +306,9 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   }
 
   const summary = results
-    .map((r) => (r ? `${r.name} ${(r.score * 100).toFixed(1)}%${r.confident ? '' : ' (неуверенно)'}` : 'нет ответа'))
+    .map((r) => (r
+      ? `${r.name} +${(r.growth * 100).toFixed(1)}% (всего ${(r.score * 100).toFixed(1)}%)${r.confident ? '' : ' — неуверенно'}`
+      : 'нет ответа'))
     .join(', ')
 
   const picked = pickAreaByVotes(results)
@@ -256,16 +321,16 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   // равным голосом запасной ломает то, что первый определяет верно.
   const fallback = pickAreaByVotes(backup)
   const backupSummary = backup
-    .map((r) => (r ? `${r.name} отрыв ${r.margin.toFixed(1)}x${r.confident ? '' : ' (неуверенно)'}` : 'нет ответа'))
+    .map((r) => (r ? `${r.name} +${(r.delta * 100).toFixed(1)}%` : 'нет ответа'))
     .join(', ')
 
   if (fallback) {
-    log(`Область сделки определена по отрыву на своей высоте как «${fallback}».`
+    log(`Область сделки определена по тому, что в ней появилось, как «${fallback}».`
       + ` Полоса внизу ничего не дала (${summary}), по отрыву: ${backupSummary}`)
     return fallback
   }
 
-  log(`Определить область сделки не удалось. По полосе внизу: ${summary}. По отрыву: ${backupSummary}`)
+  log(`Определить область сделки не удалось. По полосе внизу: ${summary}. По изменениям: ${backupSummary}`)
   return null
 }
 
