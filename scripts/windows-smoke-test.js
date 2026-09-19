@@ -45,9 +45,17 @@ function openPage(page) {
   })
 }
 
+// Срок ожидания обязателен: проверка, которая ждёт обещания, никогда не
+// выполнимого, висит вечно и уносит с собой весь прогон. Падение тут гораздо
+// полезнее — оно хотя бы называет виновника.
+const CHECK_TIMEOUT_MS = 20000
+
 async function check(win, page, description, script, validate) {
   try {
-    const value = await win.webContents.executeJavaScript(script)
+    const value = await Promise.race([
+      win.webContents.executeJavaScript(script),
+      new Promise((_resolve, reject) => setTimeout(() => reject(new Error('проверка не ответила за 20с')), CHECK_TIMEOUT_MS))
+    ])
     if (validate(value)) notes.push(`[${page}] OK: ${description} (${JSON.stringify(value)})`)
     else problems.push(`[${page}] НЕ ПРОШЛО: ${description} — получено ${JSON.stringify(value)}`)
   } catch (error) {
@@ -570,6 +578,78 @@ app.whenReady().then(async () => {
       }
     })()
   `, (v) => v && v.hiddenBefore === true && /с конца/.test(v.summary || '') && /Останется/.test(v.label || ''))
+
+  // После правки диапазона «плей» обязан показать его с начала. Раньше он
+  // прыгал к началу только когда курсор оказывался снаружи, и получалось
+  // непредсказуемо: то с начала выделения, то с середины.
+  await check(crop, 'crop.html', 'после правки диапазона плей идёт с его начала', `
+    (async () => {
+      const video = document.querySelector('[data-role="video"]')
+      const timeline = document.querySelector('[data-role="timeline"]')
+      const play = document.querySelector('[data-role="play"]')
+      const bounds = timeline.getBoundingClientRect()
+
+      // Ставим курсор в середину клипа, потом двигаем левую ручку
+      timeline.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + bounds.width * 0.5, clientY: bounds.top + 5 }))
+      await new Promise((r) => setTimeout(r, 150))
+      const beforeDrag = video.currentTime
+
+      const handle = timeline.querySelector('[data-trim="start"]')
+      handle.setPointerCapture = () => {}
+      const x = bounds.left + bounds.width * 0.2
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: bounds.top + 5, pointerId: 3 }))
+      handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: bounds.top + 5, pointerId: 3 }))
+      handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: bounds.top + 5, pointerId: 3 }))
+      await new Promise((r) => setTimeout(r, 150))
+
+      // Уводим курсор в середину диапазона — плей всё равно должен начать с начала
+      video.currentTime = video.duration * 0.5
+      await new Promise((r) => setTimeout(r, 150))
+      play.click()
+      const started = video.currentTime
+      video.pause()
+      return { beforeDrag, started, expected: video.duration * 0.2 }
+    })()
+  `, (v) => v && Math.abs(v.started - v.expected) < 0.3)
+
+  // Отметить границу по текущему кадру — самый быстрый способ обрезать:
+  // смотришь и режешь, не целясь ручкой в дорожку.
+  await check(crop, 'crop.html', 'кнопки «[» и «]» режут по текущему кадру', `
+    (async () => {
+      const video = document.querySelector('[data-role="video"]')
+      document.querySelector('[data-role="trim-reset"]').click()
+      await new Promise((r) => setTimeout(r, 150))
+
+      video.currentTime = 2
+      await new Promise((r) => setTimeout(r, 200))
+      document.querySelector('[data-role="mark-start"]').click()
+
+      video.currentTime = 6
+      await new Promise((r) => setTimeout(r, 200))
+      document.querySelector('[data-role="mark-end"]').click()
+      await new Promise((r) => setTimeout(r, 150))
+
+      return document.querySelector('[data-role="trim-label"]').textContent
+    })()
+  `, (v) => typeof v === 'string' && /Останется 0:04/.test(v) && /0:02.0 с начала/.test(v))
+
+  await check(crop, 'crop.html', 'пробел запускает и останавливает воспроизведение', `
+    (async () => {
+      const video = document.querySelector('[data-role="video"]')
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))
+      await new Promise((r) => setTimeout(r, 250))
+      const playing = !video.paused
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }))
+      await new Promise((r) => setTimeout(r, 150))
+      return { playing, stopped: video.paused }
+    })()
+  `, (v) => v && v.playing === true && v.stopped === true)
+
+  await check(crop, 'crop.html', 'текущее время видно рядом с дорожкой',
+    'document.querySelector("[data-role=time]").textContent',
+    // Без регулярного выражения намеренно: слэш внутри него — ровно то, на чём
+    // этот файл уже один раз перестал разбираться.
+    (v) => typeof v === 'string' && v.includes(' / ') && v.split(' / ').every((part) => /^\d+:\d\d?\.\d$/.test(part.trim())))
 
   await check(crop, 'crop.html', 'числовых полей обрезки больше нет',
     '!document.getElementById("trim-start") && !document.getElementById("trim-end")', (v) => v === true)

@@ -845,3 +845,22 @@ select:focus { outline: 1px solid var(--accent); }
   font-size: 12px;
   margin: 12px 0 0;
 }
+
+/* Время рядом с дорожкой и кнопки обрезки по текущему кадру */
+.preview-time {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums; /* цифры не прыгают при перемотке */
+}
+
+.preview-trim-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.preview-trim-actions button {
+  padding: 5px 12px;
+  font-size: 12px;
+}

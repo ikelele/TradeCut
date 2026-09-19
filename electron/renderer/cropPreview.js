@@ -55,7 +55,13 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
         <div class="timeline-handle timeline-handle-start" data-trim="start"></div>
         <div class="timeline-handle timeline-handle-end" data-trim="end"></div>
       </div>
+      <span class="preview-time" data-role="time"></span>
       <span class="preview-size" data-role="size"></span>
+    </div>
+    <div class="preview-trim-actions">
+      <button type="button" class="secondary" data-role="mark-start" title="Начать отсюда (клавиша [)">[ Начало здесь</button>
+      <button type="button" class="secondary" data-role="mark-end" title="Закончить здесь (клавиша ])">Конец здесь ]</button>
+      <button type="button" class="secondary" data-role="trim-reset">Весь клип</button>
     </div>
     <p class="field-hint" data-role="trim-label"></p>
     <div class="preview-actions">
@@ -74,6 +80,7 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   const soundButton = root.querySelector('[data-role="sound"]')
   const trimLabelEl = root.querySelector('[data-role="trim-label"]')
   const sizeEl = root.querySelector('[data-role="size"]')
+  const timeEl = root.querySelector('[data-role="time"]')
   const statusEl = root.querySelector('[data-role="status"]')
 
   // Рамка в CSS-пикселях относительно левого верхнего угла видео
@@ -88,6 +95,8 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   let pendingTrim = null
   // И область — до того, как станет известен размер кадра (см. showAreaWhenReady)
   let pendingArea = null
+  // Менялся ли диапазон с прошлого воспроизведения — см. setKeepRange
+  let rangeChanged = false
   // Найденные границы панелей в пикселях ИСХОДНОГО кадра
   let currentClipPath = null
   // Сетка областей: границы в пикселях ИСХОДНОГО кадра. Не в экранных, как
@@ -281,6 +290,8 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
     timeline.querySelector('[data-trim="end"]').style.left = `${endPercent}%`
     playheadEl.style.left = `${timeToPercent(video.currentTime || 0)}%`
 
+    timeEl.textContent = total ? `${formatTime(video.currentTime || 0)} / ${formatTime(total)}` : ''
+
     const kept = Math.max(0, keepTo - keepFrom)
     trimLabelEl.textContent = total
       ? `Останется ${formatTime(kept)} из ${formatTime(total)} — отрезаем ${formatTime(keepFrom)} с начала и ${formatTime(total - keepTo)} с конца`
@@ -301,8 +312,13 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   function setKeepRange(from, to, { seekTo } = {}) {
     const total = duration()
     if (!total) return
+    const before = `${keepFrom},${keepTo}`
     keepFrom = Math.max(0, Math.min(from, total - MIN_KEPT_SEC))
     keepTo = Math.min(total, Math.max(to, keepFrom + MIN_KEPT_SEC))
+    // Диапазон изменился — значит следующий «плей» показывает его целиком, с
+    // начала. Иначе получалось непредсказуемо: иногда с начала выделения,
+    // иногда с середины, смотря где до этого стоял курсор.
+    if (`${keepFrom},${keepTo}` !== before) rangeChanged = true
     if (seekTo != null) video.currentTime = Math.max(0, Math.min(seekTo, total))
     refreshTimeline()
     emitTrim()
@@ -349,14 +365,51 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
 
   // Воспроизведение — только выбранного куска: так видно, что реально
   // останется после обрезки, а не весь исходник.
-  playButton.addEventListener('click', () => {
+  function togglePlay() {
     if (!duration()) return
-    if (video.paused) {
-      if (video.currentTime < keepFrom || video.currentTime >= keepTo) video.currentTime = keepFrom
-      video.play()
-    } else {
-      video.pause()
+    if (!video.paused) return video.pause()
+
+    // С начала выделения — всегда после его правки, и всегда когда курсор
+    // оказался снаружи. Внутри диапазона курсор бывает только если человек
+    // сам туда щёлкнул, и тогда продолжаем с того места: он именно это место
+    // и хотел посмотреть.
+    if (rangeChanged || video.currentTime < keepFrom || video.currentTime >= keepTo - 0.05) {
+      video.currentTime = keepFrom
     }
+    rangeChanged = false
+    // play() отвечает обещанием, и если нажать паузу раньше, чем оно
+    // выполнится, оно отклоняется. Это не ошибка — просто передумали, — но
+    // без обработчика отказ всплывает в консоль необработанным.
+    const started = video.play()
+    if (started && typeof started.catch === 'function') started.catch(() => {})
+  }
+
+  playButton.addEventListener('click', togglePlay)
+
+  // Отметить границы прямо по тому кадру, который сейчас виден, — самый
+  // быстрый способ обрезать: смотришь и режешь, не целясь ручкой в дорожку.
+  root.querySelector('[data-role="mark-start"]').addEventListener('click', () => {
+    setKeepRange(video.currentTime, keepTo)
+  })
+  root.querySelector('[data-role="mark-end"]').addEventListener('click', () => {
+    setKeepRange(keepFrom, video.currentTime)
+  })
+  root.querySelector('[data-role="trim-reset"]').addEventListener('click', () => {
+    setKeepRange(0, duration(), { seekTo: 0 })
+  })
+
+  // Клавиши работают, только когда кадр открыт и фокус не в поле ввода —
+  // иначе пробел не дал бы напечатать имя файла.
+  window.addEventListener('keydown', (event) => {
+    if (root.hidden || !duration()) return
+    const tag = document.activeElement && document.activeElement.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+    if (event.code === 'Space') { event.preventDefault(); togglePlay() }
+    else if (event.key === '[') setKeepRange(video.currentTime, keepTo)
+    else if (event.key === ']') setKeepRange(keepFrom, video.currentTime)
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); video.currentTime = Math.max(0, video.currentTime - (event.shiftKey ? 1 : 0.1)) }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); video.currentTime = Math.min(duration(), video.currentTime + (event.shiftKey ? 1 : 0.1)) }
   })
 
   // Звук в превью — только для прослушивания при обрезке; на результат он не
@@ -388,7 +441,7 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
     applyStageLimit()
     lastShownWidth = displaySize().width
     setFullFrame()
-    statusEl.textContent = 'Потяни рамку за края, а ручками на дорожке отрежь лишнее с начала и с конца.'
+    statusEl.textContent = 'Потяни рамку за края. Пробел — воспроизведение, [ и ] — отрезать по текущему кадру, стрелки — шаг на 0,1 с (с Shift — на секунду).'
 
     // Обрезка, заданная в полях формы до открытия превью, переносится на
     // дорожку — иначе ручки показывали бы не то, что реально произойдёт.
