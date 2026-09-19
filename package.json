@@ -1,6 +1,6 @@
 {
   "name": "tradecut",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Режет клипы твоих сделок из буфера повтора OBS по журналу торгового терминала",
   "main": "electron/main.js",
   "scripts": {

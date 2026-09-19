@@ -7,7 +7,7 @@ const { createUpdater } = require('./updater')
 const { createTray } = require('./tray')
 const { createNotifier } = require('./notifier')
 const autostart = require('./autostart')
-const { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
+const { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
 
 const APP_USER_MODEL_ID = 'com.tradecut.app'
 
@@ -79,11 +79,51 @@ function main() {
 
   let logger = null
   let log = (message) => console.log(message)
+  // Состояние слежения. Раньше жило внутри startTrayApp и было видно только
+  // трею — теперь его спрашивает и главное окно, а оно открывается когда
+  // угодно, в том числе до того, как трей успел что-то поменять.
+  let restarting = false
+  let paused = false
+  let obsState = 'disconnected'
+  let replayBufferActive = true // оптимистично, пока не проверили обратное
+  let actionError = null
   let tray = null
   let notifier = null
   let appCore = null
   let updater = null
   let config = null
+
+  // Одно место, где решается, в каком состоянии программа. Им пользуются и
+  // значок в трее, и главное окно — иначе они разошлись бы во мнениях.
+  // Наружу отдаётся только состояние, а словами его описывает тот, кто
+  // показывает: в трее нужна короткая строка, в окне — человеческая.
+  function currentStatus() {
+    if (paused) return { state: 'paused' }
+    if (actionError) return { state: 'error', text: actionError }
+    if (obsState !== 'connected') return { state: 'warn' }
+    return { state: replayBufferActive ? 'ok' : 'bufferOff' }
+  }
+
+  function statusForWindow() {
+    const { resolveMediaPath } = require('../src/appPaths')
+    return {
+      ...currentStatus(),
+      paused,
+      terminal: config ? config.terminal.type : null,
+      obsUrl: config ? config.obs.url : null,
+      obsPasswordSet: Boolean(config && config.obs.password),
+      clipsDir: config ? resolveMediaPath(config.clip.outputDir) : null,
+      areasCount: config ? (config.clip.cropPresets || []).length : 0,
+      autoCropDetect: Boolean(config && config.clip.autoCropDetect),
+      autoCropArea: config ? config.clip.autoCropArea : '',
+      version: app.getVersion()
+    }
+  }
+
+  function pushStatusToWindow() {
+    const win = getMainWindow()
+    if (win) win.webContents.send('status:changed', statusForWindow())
+  }
 
   function openCropWindowFor(filePath, { guided = false } = {}) {
     const win = openCropWindow()
@@ -108,7 +148,7 @@ function main() {
     // старая запись в реестре), и приложение вместо тихого старта в трее
     // показывало окно. Просто поднимаем уже открытое, если оно есть.
     log('Программа уже работает — повторный запуск проигнорирован')
-    const existing = getTradesWindow()
+    const existing = getMainWindow()
     if (existing) {
       if (existing.isMinimized()) existing.restore()
       existing.focus()
@@ -260,6 +300,21 @@ function main() {
     ipcMain.on('settings:open', () => openSettingsWindow())
 
     ipcMain.handle('app:version', () => ({ version: app.getVersion(), installKind: getInstallKind() }))
+
+    ipcMain.handle('status:get', () => statusForWindow())
+
+    // Повтор по требованию — то же, что пункт в трее, но из окна.
+    ipcMain.handle('replay:save', async (_event, durationSec) => {
+      if (!appCore) return { error: 'Слежение за сделками ещё не запущено' }
+      return appCore.saveManualReplay(Number(durationSec) || 15)
+    })
+
+    // Папка целиком, а не файл в ней: shell:reveal умеет только подсветить
+    // конкретный файл, а здесь открывать надо саму папку клипов.
+    ipcMain.on('folder:open', (_event, dirPath) => {
+      if (dirPath) shell.openPath(dirPath)
+    })
+    ipcMain.on('window:open-main', () => openMainWindow())
 
     // Проверка обновлений по кнопке. В отличие от той, что при запуске, эта
     // отвечает всегда — окно настроек показывает итог у себя. Молчание в ответ
@@ -483,7 +538,7 @@ function main() {
   }
 
   function pushTradesToWindow(trades) {
-    const win = getTradesWindow()
+    const win = getMainWindow()
     if (win) win.webContents.send('trades:updated', trades)
   }
 
@@ -501,22 +556,15 @@ function main() {
     autostart.repointAutostartIfMoved(APP_USER_MODEL_ID, log)
     logRenderingDiagnostics()
 
-    let restarting = false
-    let paused = false
-    let obsState = 'disconnected'
-    let replayBufferActive = true // оптимистично, пока не проверили и не выяснили обратное
-    let actionError = null
-
     // Единая точка принятия решения, что показать на иконке трея — приоритет:
     // пауза > ошибка последнего действия (рестарт/пауза) > статус OBS >
     // статус Replay Buffer. Во время самого рестарта/переключения паузы
     // ничего не трогаем — там статус выставляется явно по ходу операции.
     function renderTrayStatus() {
       if (restarting) return
-      if (paused) return tray.setStatus('paused')
-      if (actionError) return tray.setStatus('error', actionError)
-      if (obsState !== 'connected') return tray.setStatus('warn')
-      tray.setStatus(replayBufferActive ? 'ok' : 'bufferOff')
+      const { state, text } = currentStatus()
+      tray.setStatus(state, state === 'error' ? text : undefined)
+      pushStatusToWindow()
     }
 
     tray = createTray({
@@ -590,7 +638,7 @@ function main() {
       onPickStakan: (clipPath, stakanIndex, options) => {
         void appCore.cropRecentClip(clipPath, stakanIndex, options)
       },
-      onOpenTradesWindow: () => openTradesWindow(),
+      onOpenTradesWindow: () => openMainWindow(),
       onOpenCropWindow: () => openCropWindow(),
       onOpenCropFor: (clipPath) => openCropWindowFor(clipPath),
       onSaveManualReplay: (durationSec) => appCore.saveManualReplay(durationSec),

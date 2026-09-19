@@ -61,13 +61,13 @@ for (const channel of handled) {
 notes.push(`каналов IPC: ${requested.length}, все обработаны`)
 
 // ── 3. getElementById из окна должен существовать в его разметке ───────────
-const pageOfScript = { 'settings.js': 'settings.html', 'crop.js': 'crop.html', 'trades.js': 'trades.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
+const pageOfScript = { 'settings.js': 'settings.html', 'crop.js': 'crop.html', 'main.js': 'main.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
 for (const [script, page] of Object.entries(pageOfScript)) {
   if (!rendererJs.includes(script) || !rendererHtml.includes(page)) continue
   const source = read('electron', 'renderer', script)
   const html = read('electron', 'renderer', page)
   // Общая панель обрезки строит свою разметку сама — её id ищем и в ней
-  const extra = page === 'crop.html' || page === 'trades.html'
+  const extra = page === 'crop.html' || page === 'main.html'
     ? read('electron', 'renderer', 'cropForm.js') + read('electron', 'renderer', 'cropPreview.js')
     : ''
   const available = new Set([...matchAll(html + extra, /id="([\w-]+)"/g)])

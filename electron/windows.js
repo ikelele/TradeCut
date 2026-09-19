@@ -103,10 +103,6 @@ function createWindow({ page, width, height, title }) {
   return win
 }
 
-// Окно со списком всех сделок сессии. Держим ссылку на единственный экземпляр:
-// повторный вызов из трея просто поднимает уже открытое окно, а не плодит копии.
-let tradesWindow = null
-
 // Поднимает уже открытое окно. Проверка isVisible обязательна: окно могло
 // быть создано, но так и не показаться, и один только focus() его не покажет.
 function raiseWindow(win) {
@@ -116,27 +112,35 @@ function raiseWindow(win) {
   return win
 }
 
-function openTradesWindow() {
-  if (tradesWindow && !tradesWindow.isDestroyed()) {
-    return raiseWindow(tradesWindow)
-  }
-  tradesWindow = createWindow({
-    page: 'trades.html',
-    width: 760,
-    height: 560,
-    title: 'TradeCut — сделки'
-  })
-  tradesWindow.on('closed', () => { tradesWindow = null })
-  return tradesWindow
-}
-
-function getTradesWindow() {
-  return tradesWindow && !tradesWindow.isDestroyed() ? tradesWindow : null
-}
-
 // Окну настроек шлётся ход загрузки обновления — если оно открыто.
 function getSettingsWindow() {
   return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
+}
+
+// Главное окно. Одно на программу: это её "лицо", а не инструмент, и две
+// копии одного и того же лица бессмысленны.
+//
+// До него у программы не было окна вовсе — только значок в трее и меню в нём.
+// Из-за этого на вопрос "работает ли она сейчас" отвечал один лишь цвет
+// значка, который легко не заметить и который ничего не объясняет.
+let mainWindow = null
+
+function openMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return raiseWindow(mainWindow)
+  }
+  mainWindow = createWindow({
+    page: 'main.html',
+    width: 760,
+    height: 620,
+    title: 'TradeCut'
+  })
+  mainWindow.on('closed', () => { mainWindow = null })
+  return mainWindow
+}
+
+function getMainWindow() {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
 }
 
 // Окно ручной обрезки. Может открываться как с уже известным файлом (его
@@ -204,4 +208,4 @@ function openSettingsWindow() {
   return settingsWindow
 }
 
-module.exports = { setWindowsLogger, openTradesWindow, getTradesWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow }
+module.exports = { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow }

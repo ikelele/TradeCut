@@ -22,8 +22,19 @@ contextBridge.exposeInMainWorld('api', {
   openHelp: () => ipcRenderer.send('help:open'),
   openSetup: () => ipcRenderer.send('setup:open'),
   openSettings: () => ipcRenderer.send('settings:open'),
+  openMain: () => ipcRenderer.send('window:open-main'),
 
   getAppVersion: () => ipcRenderer.invoke('app:version'),
+
+  // Главное окно: состояние слежения и то, что из него можно сделать
+  getStatus: () => ipcRenderer.invoke('status:get'),
+  onStatusChanged: (listener) => {
+    const handler = (_event, status) => listener(status)
+    ipcRenderer.on('status:changed', handler)
+    return () => ipcRenderer.off('status:changed', handler)
+  },
+  saveReplay: (durationSec) => ipcRenderer.invoke('replay:save', durationSec),
+  openFolderPath: (dirPath) => ipcRenderer.send('folder:open', dirPath),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
   onUpdateProgress: (listener) => {
     const handler = (_event, progress) => listener(progress)

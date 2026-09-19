@@ -86,6 +86,25 @@ app.whenReady().then(async () => {
   }))
   ipcMain.handle('setup:save-replay', () => ({ clipPath: 'C:\\Trades\\replays\\повтор.mp4' }))
 
+  ipcMain.handle('app:version', () => ({ version: '1.5.1', installKind: 'installed' }))
+  ipcMain.handle('updates:check', () => ({ state: 'none', current: '1.5.1' }))
+  ipcMain.handle('status:get', () => ({
+    state: 'ok',
+    paused: false,
+    obsPasswordSet: true,
+    terminal: 'vataga',
+    obsUrl: 'ws://127.0.0.1:4455',
+    clipsDir: 'C:/Users/Trader/Videos/TradeCut/clips',
+    areasCount: 6,
+    autoCropDetect: true,
+    autoCropArea: 'стакан 4',
+    version: '1.5.1'
+  }))
+  ipcMain.handle('replay:save', () => ({ clipPath: 'C:/Trades/replays/повтор.mp4' }))
+  ipcMain.on('folder:open', () => {})
+  ipcMain.on('window:open-main', () => {})
+
+  await shoot('main.html', { width: 760, height: 620 })
   await shoot('settings.html', { width: 700, height: 720 })
   await shoot('setup.html', { width: 660, height: 700 })
 
@@ -97,7 +116,6 @@ app.whenReady().then(async () => {
     })
   `)
   await shoot('help.html', { width: 680, height: 720 })
-  await shoot('trades.html', { width: 760, height: 560 })
   await shoot('crop.html', { width: 620, height: 700 })
 
   // Окно обрезки с открытым превью — основной рабочий вид

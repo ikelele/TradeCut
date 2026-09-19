@@ -88,6 +88,9 @@ nextButton.addEventListener('click', async () => {
   try {
     await persistCurrentStep()
     if (stepIndex === STEPS.length - 1) {
+      // Настройка закончилась — показываем, куда человек попал. Иначе последнее
+      // впечатление от программы это исчезнувшее окно и пустой экран.
+      window.api.openMain()
       window.api.closeWindow()
       return
     }

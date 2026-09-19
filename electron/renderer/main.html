@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- media-src нужен для превью клипа во вкладке "Клипы": без него
+       default-src 'none' запрещает загрузку видео в окно. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' file:">
+  <link rel="stylesheet" href="app.css">
+  <title>TradeCut</title>
+</head>
+<body>
+  <div class="tabs">
+    <button type="button" class="tab" data-tab="now" aria-selected="true">Сейчас</button>
+    <button type="button" class="tab" data-tab="clips" aria-selected="false">Клипы</button>
+    <button type="button" class="secondary help-button" id="open-help" title="Как пользоваться программой">?</button>
+  </div>
+
+  <div class="scroll-area">
+
+    <section data-panel="now">
+      <div class="status-card">
+        <span class="status-dot" id="status-dot"></span>
+        <div class="status-card-text">
+          <div class="status-title" id="status-title">Проверяю...</div>
+          <div class="status-detail" id="status-detail"></div>
+        </div>
+      </div>
+
+      <dl class="facts" id="facts"></dl>
+
+      <div class="field">
+        <label class="field-label">Сохранить повтор прямо сейчас</label>
+        <div class="options" data-role="replay"></div>
+        <p class="field-hint">Заберёт последние секунды из буфера OBS, безо всякой сделки. Пригодится, когда на экране произошло что-то интересное</p>
+      </div>
+
+      <div class="quick-actions">
+        <button type="button" class="secondary" id="open-clips-dir">Открыть папку клипов</button>
+        <button type="button" class="secondary" id="open-crop">Обрезать другой файл...</button>
+        <button type="button" class="secondary" id="open-settings">Настройки...</button>
+        <button type="button" class="secondary" id="open-setup">Пройти первую настройку</button>
+      </div>
+
+      <div class="status" id="now-status"></div>
+    </section>
+
+    <section data-panel="clips" hidden>
+      <p class="hint">Клипы за текущий запуск программы. Выбери сделку, затем что из неё вырезать. Список пополняется сам по мере закрытия сделок.</p>
+
+      <div class="dropzone" id="dropzone">
+        Перетащи сюда любой другой видеофайл, чтобы обрезать его в отдельном окне
+      </div>
+
+      <div class="trade-list" id="trade-list">
+        <div class="empty">Сделок пока нет</div>
+      </div>
+
+      <div id="crop-form" class="form-below-list"></div>
+
+      <div class="actions">
+        <button type="button" class="primary" id="run" disabled>Вырезать</button>
+      </div>
+
+      <div class="status" id="clips-status"></div>
+    </section>
+
+  </div>
+
+  <script src="cropPreview.js"></script>
+  <script src="cropForm.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

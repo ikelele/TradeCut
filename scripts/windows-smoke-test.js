@@ -133,6 +133,23 @@ app.whenReady().then(async () => {
   // Последний шаг помощника зовёт окно настроек — в тесте открывать его не надо
   ipcMain.on('settings:open', () => {})
   ipcMain.handle('app:version', () => ({ version: '9.9.9', installKind: 'installed' }))
+  // Главное окно спрашивает состояние слежения и умеет звать повтор
+  let statusAnswer = {
+    state: 'warn',
+    paused: false,
+    obsPasswordSet: false,
+    terminal: 'tigertrade',
+    obsUrl: 'ws://127.0.0.1:4455',
+    clipsDir: 'C:\Видео\TradeCut\clips',
+    areasCount: 1,
+    autoCropDetect: false,
+    autoCropArea: '',
+    version: '9.9.9'
+  }
+  ipcMain.handle('status:get', () => statusAnswer)
+  ipcMain.handle('replay:save', () => ({ clipPath: 'C:\replays\проверка.mp4' }))
+  ipcMain.on('folder:open', () => {})
+  ipcMain.on('window:open-main', () => {})
   // Проверка обновлений отвечает по очереди всем, чем может: сначала "всё
   // свежее", потом пустой список выпусков, потом настоящая ошибка сети.
   const UPDATE_ANSWERS = [
@@ -665,12 +682,46 @@ app.whenReady().then(async () => {
        && v.nextLabel === 'Готово' && v.skipHidden === true && v.wired === true
        && /ok/.test(v.statusCls) && /закончил/.test(v.statusText))
 
-  const trades = await openPage('trades.html')
-  await check(trades, 'trades.html', 'список сделок отрисован',
+  const mainWin = await openPage('main.html')
+
+  // Главное окно отвечает на вопрос "работает ли программа" словами, а не
+  // цветом значка, который надо знать наизусть.
+  await check(mainWin, 'main.html', 'состояние показано словами и с подсказкой, что делать', `
+    (() => ({
+      dot: document.getElementById('status-dot').className,
+      title: document.getElementById('status-title').textContent,
+      detail: document.getElementById('status-detail').textContent
+    }))()
+  `, (v) => v && /status-dot-warn/.test(v.dot) && /Нет связи с OBS/.test(v.title)
+       && /Пароль от OBS не задан/.test(v.detail))
+
+  await check(mainWin, 'main.html', 'сводка настроек собрана',
+    '[...document.querySelectorAll("#facts dt")].map(el => el.textContent)',
+    (v) => Array.isArray(v) && v.includes('Терминал') && v.includes('Клипы') && v.includes('Версия'))
+
+  await check(mainWin, 'main.html', 'кнопки повтора взяты из настроек',
+    '[...document.querySelectorAll("[data-role=replay] .option")].map(b => b.textContent)',
+    (v) => Array.isArray(v) && v.length === config.clip.replayPresetsSec.length && v[0] === '15 сек')
+
+  await check(mainWin, 'main.html', 'вкладки переключаются', `
+    (() => {
+      const clipsTab = [...document.querySelectorAll('.tab')].find(t => t.dataset.tab === 'clips')
+      const before = document.querySelector('[data-panel=clips]').hidden
+      clipsTab.click()
+      return {
+        before,
+        after: document.querySelector('[data-panel=clips]').hidden,
+        nowHidden: document.querySelector('[data-panel=now]').hidden,
+        selected: clipsTab.getAttribute('aria-selected')
+      }
+    })()
+  `, (v) => v && v.before === true && v.after === false && v.nowHidden === true && v.selected === 'true')
+
+  await check(mainWin, 'main.html', 'список сделок отрисован во вкладке',
     'document.querySelectorAll(".trade-item").length', (v) => v === 1)
-  await check(trades, 'trades.html', 'кнопка "Вырезать" заблокирована до выбора сделки',
+  await check(mainWin, 'main.html', 'кнопка "Вырезать" заблокирована до выбора сделки',
     'document.getElementById("run").disabled', (v) => v === true)
-  await check(trades, 'trades.html', 'выбор сделки разблокирует кнопку',
+  await check(mainWin, 'main.html', 'выбор сделки разблокирует кнопку',
     'document.querySelector(".trade-item").click(); document.getElementById("run").disabled', (v) => v === false)
 
   for (const note of notes) console.log(note)

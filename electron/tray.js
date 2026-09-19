@@ -271,7 +271,7 @@ function createTray({
     }
 
     template.push(
-      { label: `Все сделки (${recentClips.length})...`, click: () => onOpenTradesWindow() },
+      { label: `Открыть TradeCut (сделок: ${recentClips.length})`, click: () => onOpenTradesWindow() },
       { label: 'Обрезать произвольный файл...', click: () => onOpenCropWindow() },
       { type: 'separator' },
       { label: 'Настройки...', click: () => onOpenSettingsWindow() },
