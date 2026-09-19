@@ -103,8 +103,8 @@ function writeByPath(target, pathParts, value) {
 // руками бессмысленно.
 const presetListEl = document.querySelector('[data-role="preset-list"]')
 
-// Держим их отдельно, чтобы вернуть в конфиг при сохранении: в FIELDS их нет,
-// а без этого "Сохранить" затёрло бы всю настройку границ.
+// Нужны только для показа: списка областей и выбора «что вырезать сразу».
+// Обратно в конфиг отсюда они НЕ уходят.
 let loadedPresets = []
 
 // Выбор «что вырезать сразу» строится из тех же сохранённых областей —
@@ -203,8 +203,9 @@ function collectForm() {
     else value = el.value
     writeByPath(config, field.path, value)
   }
-  // Области кадра окно настроек не редактирует, но обязано вернуть их как есть
-  config.clip.cropPresets = loadedPresets
+  // Области кадра отсюда НЕ отправляются. Раньше окно возвращало их «как
+  // есть» из копии, снятой при открытии, и затирало те, что успели появиться
+  // позже. Теперь их хранит только основной процесс — см. config:save.
   return config
 }
 
@@ -217,6 +218,15 @@ for (const button of document.querySelectorAll('[data-pick-folder]')) {
 }
 
 window.api.getConfig().then(fillForm)
+
+// Области размечают в отдельном окне, и вернувшись сюда человек должен
+// увидеть их, а не тот список, что был при открытии программы.
+const settingsPanel = document.querySelector('[data-panel="settings"]')
+if (settingsPanel) {
+  new MutationObserver(() => {
+    if (!settingsPanel.hidden) window.api.getConfig().then(fillForm)
+  }).observe(settingsPanel, { attributes: true, attributeFilter: ['hidden'] })
+}
 
 saveButton.addEventListener('click', async () => {
   saveButton.disabled = true

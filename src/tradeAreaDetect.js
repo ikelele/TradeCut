@@ -212,7 +212,14 @@ const SAMPLE_POINTS = [0.3, 0.5, 0.7]
 // Разбор целого клипа. Возвращает имя области либо null — "определить не
 // удалось", и это нормальный ответ, а не сбой.
 async function detectTradeArea(clipPath, areas, log = () => {}) {
-  if (!Array.isArray(areas) || areas.length < 2) return null
+  // Молчать тут нельзя. У стороннего пользователя области стёрло сохранением
+  // настроек, и в журнале осталась только строка «область не определена» —
+  // выглядело как отказ распознавания, хотя распознавать было нечего.
+  if (!Array.isArray(areas) || areas.length < 2) {
+    log(`Область сделки не ищем: настроенных областей ${Array.isArray(areas) ? areas.length : 0},`
+      + ' а нужно хотя бы две. Размести области в окне разметки.')
+    return null
+  }
 
   const { probeVideoSize, probeDurationSeconds } = require('./clipper')
   const { grabFrameRgba } = require('./videoFrame')

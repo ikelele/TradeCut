@@ -255,6 +255,24 @@ function loadConfig() {
 // Сохраняет конфиг обратно в config.json (окно настроек). Приводит значения к
 // нужным типам и отбрасывает всё лишнее: в файл попадают только известные
 // ключи, а не то, что прислало окно.
+// Области кадра приходят НЕ из окна настроек.
+//
+// Окно снимает копию конфига при открытии и держит её до закрытия. Разметил
+// области в соседнем окне, нажал в настройках «Сохранить» — и копия, снятая
+// ДО разметки, затирает всё, что только что настроил. Именно так у стороннего
+// пользователя пропали двенадцать областей через семь секунд после того, как
+// он их сохранил.
+//
+// Поэтому список берётся только у того, кто им владеет, — у основного
+// процесса, — а присланный игнорируется. Для удаления есть отдельный канал.
+function keepCropPresets(incoming, currentPresets) {
+  const clip = (incoming && incoming.clip) || {}
+  return {
+    ...incoming,
+    clip: { ...clip, cropPresets: Array.isArray(currentPresets) ? currentPresets : [] }
+  }
+}
+
 function saveConfig(incoming) {
   // Что уже лежит на диске — нужно для ключей, которые окно настроек не
   // присылает (см. cropPresets ниже).
@@ -334,4 +352,5 @@ function saveConfig(incoming) {
   return normalized
 }
 
-module.exports = { loadConfig, saveConfig, wasConfigJustCreated, CONFIG_PATH, DEFAULT_CONFIG }
+module.exports = {
+  keepCropPresets, loadConfig, saveConfig, wasConfigJustCreated, CONFIG_PATH, DEFAULT_CONFIG }

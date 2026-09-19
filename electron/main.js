@@ -378,8 +378,11 @@ function main() {
     ipcMain.handle('config:get', () => config)
 
     ipcMain.handle('config:save', async (_event, incoming) => {
-      const { saveConfig } = require('../src/config')
-      const saved = saveConfig(incoming)
+      const { saveConfig, keepCropPresets } = require('../src/config')
+      // Присланные окном области игнорируем — см. keepCropPresets. У
+      // стороннего пользователя копия, снятая окном до разметки, стёрла все
+      // двенадцать областей через семь секунд после их сохранения.
+      const saved = saveConfig(keepCropPresets(incoming, config.clip.cropPresets))
       // Именно мутируем существующий объект, а не заменяем ссылку: createApp
       // захватил config по ссылке, и подмена переменной до него бы не дошла.
       Object.assign(config.obs, saved.obs)

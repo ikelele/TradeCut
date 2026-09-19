@@ -369,12 +369,21 @@ app.whenReady().then(async () => {
 
   await check(settings, 'main.html (настройки)', 'из настроек можно открыть окно настройки областей',
     'typeof window.api.openCropWindow === "function" && !!document.getElementById("open-crop")', (v) => v === true)
-  await check(settings, 'main.html (настройки)', 'сохранение из настроек не теряет настроенные области', `
+  // Главная страховка — в основном процессе (keepCropPresets), но окно и само
+  // не должно присылать области: именно присланная им устаревшая копия стёрла
+  // у стороннего пользователя двенадцать областей через семь секунд после
+  // того, как он их сохранил.
+  await check(settings, 'main.html (настройки)', 'окно настроек не отправляет области кадра', `
     (() => {
-      const collected = collectForm()
-      return Array.isArray(collected.clip.cropPresets)
+      showTab('settings')
+      const sent = collectForm()
+      return {
+        sendsPresets: Object.prototype.hasOwnProperty.call(sent.clip || {}, 'cropPresets'),
+        clipFields: Object.keys(sent.clip || {}).length
+      }
     })()
-  `, (v) => v === true)
+  `, (v) => v && v.sendsPresets === false && v.clipFields > 3)
+
   await check(settings, 'main.html (настройки)', 'папка клипов заполнена',
     'document.getElementById("output-dir").value', (v) => typeof v === 'string' && v.length > 0)
   await check(settings, 'main.html (настройки)', 'папка для повторов из трея заполнена',

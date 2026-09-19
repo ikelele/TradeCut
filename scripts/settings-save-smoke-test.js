@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({
   clip: { outputDir: './clips' }
 }, null, 2), 'utf8')
 
-const { loadConfig, saveConfig, wasConfigJustCreated } = require('../src/config')
+const { loadConfig, saveConfig, keepCropPresets, wasConfigJustCreated } = require('../src/config')
 
 const config = loadConfig()
 // Обратная сторона первого запуска: config.json уже лежал на диске, значит
@@ -94,6 +94,25 @@ assert.strictEqual(afterPlainSave.clip.cropPresets[0].name, 'Левый стак
 const afterClear = saveConfig({ ...afterPlainSave, clip: { ...afterPlainSave.clip, cropPresets: [] } })
 assert.deepStrictEqual(afterClear.clip.cropPresets, [], 'явный пустой список должен очищать области')
 console.log('[OK] области кадра переживают сохранение настроек')
+
+// А вот это и подвело стороннего пользователя. Явный пустой список выше —
+// законное "удалить всё", и на своём уровне saveConfig прав. Беда была этажом
+// выше: окно настроек присылало такой список из копии, снятой ДО разметки
+// областей. Двенадцать областей пропали через семь секунд после сохранения.
+// Теперь присланный список не принимается вовсе.
+const stale = { ...withPresets, clip: { ...withPresets.clip, cropPresets: [] } }
+const live = [
+  { name: 'Стакан 1', x: 0, y: 0, width: 286, height: 1440, sourceWidth: 3440, sourceHeight: 1440 },
+  { name: 'Стакан 2', x: 286, y: 0, width: 286, height: 1440, sourceWidth: 3440, sourceHeight: 1440 }
+]
+const guarded = keepCropPresets(stale, live)
+assert.strictEqual(guarded.clip.cropPresets.length, 2,
+  'устаревшая копия из окна не должна стирать области')
+assert.strictEqual(guarded.clip.stakanCount, withPresets.clip.stakanCount,
+  'остальные настройки из окна должны доходить как есть')
+const savedGuarded = saveConfig(guarded)
+assert.strictEqual(savedGuarded.clip.cropPresets.length, 2)
+console.log('[OK] окно настроек не может стереть области кадра')
 
 const onDisk = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf8'))
 assert.strictEqual(onDisk.terminal.type, 'tigertrade')
