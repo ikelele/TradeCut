@@ -1373,6 +1373,63 @@ function testDetectPanelGuidesOnBlankFrame() {
   console.log('[OK] testDetectPanelGuidesOnBlankFrame')
 }
 
+// Разметка TigerTrade: у панели рамка нарисована двумя линиями подряд, а
+// внутри панели своя вертикальная линия — между графиком и лестницей заявок.
+// Она идёт во всю высоту, то есть от настоящей границы неотличима ничем, кроме
+// шага сетки.
+//
+// Так выглядела вторая поломка у стороннего пользователя. На четырёх записях
+// автора детектор выдавал 2, 6 и 18 колонок там, где их 12: каждая рамка
+// считалась за две границы, а внутренние линии подмешивались к настоящим.
+function testDetectPanelGuidesWithInnerDividers() {
+  const width = 1440
+  const height = 600
+  const PITCH = 120
+  const BACKGROUND = 60
+  const LINE = 20
+
+  const columns = new Set()
+  let panel = 0
+  for (let x = 0; x <= width - PITCH; x += PITCH) {
+    columns.add(x)
+    columns.add(x + 6) // вторая линия рамки
+    // Внутренняя линия есть не у каждой панели: у одних стакан открыт на
+    // графике, у других нет. На живой записи TigerTrade таких оказалось шесть
+    // из двенадцати — столько же берём и здесь.
+    if (panel % 2 === 0) columns.add(x + 70)
+    panel++
+  }
+
+  const data = new Uint8Array(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      const value = columns.has(x) ? LINE : BACKGROUND
+      data[i] = value
+      data[i + 1] = value
+      data[i + 2] = value
+      data[i + 3] = 255
+    }
+  }
+
+  const guides = detectPanelGuides({ data, width, height })
+  const gaps = guides.vertical.slice(1).map((x, index) => x - guides.vertical[index])
+
+  assert.ok(gaps.length >= 10,
+    `должна найтись сетка из дюжины панелей, а найдено промежутков: ${gaps.length} (${guides.vertical.join(', ')})`)
+  for (const gap of gaps) {
+    assert.ok(Math.abs(gap - PITCH) <= 8,
+      `промежуток ${gap} не похож на шаг сетки ${PITCH}: ${guides.vertical.join(', ')}`)
+  }
+  // Ни одна внутренняя линия не должна попасть в ответ
+  for (let x = 70; x < width; x += PITCH) {
+    assert.ok(!guides.vertical.some((line) => Math.abs(line - x) <= 3),
+      `внутренняя линия ${x} не должна считаться границей панели: ${guides.vertical.join(', ')}`)
+  }
+
+  console.log('[OK] testDetectPanelGuidesWithInnerDividers')
+}
+
 // Имя файла, заданное в окне. Приходит от пользователя, поэтому проверяем
 // именно то, чем можно навредить: разделители пути и запрещённые символы.
 function testSanitizeOutputFileName() {
@@ -1606,6 +1663,7 @@ async function main() {
   testDetectPanelGuides()
   testDetectPanelGuidesOnPaleTheme()
   testDetectPanelGuidesOnBlankFrame()
+  testDetectPanelGuidesWithInnerDividers()
   testSanitizeOutputFileName()
   await testCropClipUsesGivenNameAndKeepsPrevious()
   await testCreateMergedClipFromReplayWithinBounds()

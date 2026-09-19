@@ -49,6 +49,33 @@ const MIN_PANEL_RATIO = 0.025
 const MAX_VARIANTS = 4
 // Ближе этого линии считаются одной и той же
 const CLUSTER_GAP = 4
+// Рамку панели терминал рисует двумя линиями подряд: у TigerTrade они стоят в
+// пяти-семи пикселях друг от друга, и без склейки каждая рамка давала две
+// границы вместо одной. Панель уже MIN_PANEL_RATIO всё равно не считается
+// панелью, так что склеивать на таком расстоянии безопасно.
+const MERGE_GAP = 8
+// Какую долю высоты кадра должен держать перепад, чтобы линия считалась
+// сквозной. Замерено на TigerTrade: настоящие границы панелей держат 91-95%,
+// внутренняя разметка стакана — 76-82%.
+const FULL_HEIGHT_COVERAGE = 0.88
+// Насколько линия может отклоняться от узла сетки, в долях шага
+const LATTICE_TOLERANCE = 0.08
+// Какую долю узлов сетки должны занимать настоящие линии. Без этого сеткой
+// объявлялся любой мелкий шаг: на него случайно ложится половина линий.
+const MIN_LATTICE_FILL = 0.7
+// Насколько ниже ценится находка сквозного прохода.
+//
+// Сквозные линии видят рамки ОКОН, а терминал часто держит в одном окне
+// несколько стаканов. Такая сетка тоже ровная, и по ровности она честно
+// обходит настоящую — а размечать человеку нужно стаканы, а не окна. Поэтому
+// сквозной проход выигрывает только тогда, когда полосовой ответ откровенно
+// рваный: на записях TigerTrade разрыв был больше чем двукратный (разброс
+// промежутков 41% против 1%), на снимках с окнами — считаные проценты.
+const THROUGH_WEIGHT = 0.7
+// Какую долю найденных линий сетка обязана объяснить. Без этого подгонка
+// выбрасывала настоящие границы ради ровности: на снимке с восемью стаканами
+// оставалось две колонки — зато с идеально равными промежутками.
+const MIN_LATTICE_SHARE = 0.6
 // Во сколько раз неровность промежутков снижает оценку набора. Подобрано по
 // живым снимкам: при меньшем значении наборы внутренних линий стакана иногда
 // обходили настоящую сетку панелей.
@@ -71,7 +98,7 @@ function clusterPositions(positions) {
   const clusters = []
   for (const value of positions) {
     const last = clusters[clusters.length - 1]
-    if (last && value - last[last.length - 1] <= CLUSTER_GAP) last.push(value)
+    if (last && value - last[last.length - 1] <= MERGE_GAP) last.push(value)
     else clusters.push([value])
   }
   return clusters.map((cluster) => Math.round(cluster.reduce((a, b) => a + b, 0) / cluster.length))
@@ -90,6 +117,92 @@ function verticalLinesInBand(gray, width, bandTop, bandHeight, threshold, covera
   const found = []
   for (let x = 0; x < width - 1; x++) if (hits[x] >= needed) found.push(x)
   return clusterPositions(found)
+}
+
+// Вертикальные линии, идущие через ВЕСЬ кадр, а не через узкую полосу.
+//
+// Зачем отдельно от полос. Полоса в двадцать пикселей не отличает границу
+// панели от внутренней линии стакана: в полосе они выглядят одинаково. А по
+// всей высоте разница видна — граница панели идёт от края до края, внутренняя
+// разметка обрывается там, где кончается таблица.
+function fullHeightLines(gray, width, height, threshold) {
+  const hits = new Int32Array(width - 1)
+  for (let y = 0; y < height; y++) {
+    const row = y * width
+    for (let x = 0; x < width - 1; x++) {
+      if (Math.abs(gray[row + x + 1] - gray[row + x]) >= threshold) hits[x]++
+    }
+  }
+  const needed = height * FULL_HEIGHT_COVERAGE
+  const found = []
+  for (let x = 0; x < width - 1; x++) if (hits[x] >= needed) found.push(x)
+  return clusterPositions(found)
+}
+
+// Оставить из набора только то, что ложится на одну сетку.
+//
+// Панели разложены плиткой: между настоящими границами один и тот же шаг. А
+// внутри панели бывает своя вертикальная разметка — у TigerTrade это линия
+// между графиком и лестницей заявок, и она идёт во всю высоту панели, то есть
+// от границы неотличима ничем, кроме шага. В один набор попадают линии двух
+// разных масштабов, и сетка выходит рваной: на записях автора детектор выдавал
+// 2, 6 и 18 колонок там, где их 12.
+//
+// Ищем шаг и начало, на которые ложится больше всего найденных линий.
+function fitLattice(lines, width) {
+  if (lines.length < 4) return null
+  const minStep = width * MIN_PANEL_RATIO
+
+  // Шаг ищем среди расстояний между парами линий: настоящий шаг обязательно
+  // встретится как расстояние между какими-то двумя границами.
+  const steps = new Set()
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i + 1; j < lines.length; j++) {
+      const step = lines[j] - lines[i]
+      if (step >= minStep && step <= width) steps.add(step)
+    }
+  }
+
+  let best = null
+  for (const step of steps) {
+    const tolerance = Math.max(2, step * LATTICE_TOLERANCE)
+    for (const origin of lines) {
+      const matched = lines.filter((value) => {
+        const slot = Math.round((value - origin) / step)
+        return Math.abs(value - (origin + slot * step)) <= tolerance
+      })
+      if (matched.length < 3) continue
+
+      const span = matched[matched.length - 1] - matched[0]
+      const slots = Math.round(span / step) + 1
+      const fill = matched.length / slots
+      if (fill < MIN_LATTICE_FILL) continue
+      // Сетка должна объяснять не только свои узлы, но и сам набор: иначе
+      // выгодно объявить сеткой три линии из десяти и выбросить остальные.
+      if (matched.length < lines.length * MIN_LATTICE_SHARE) continue
+
+      // Больше объяснённых линий — лучше. При равенстве берём шаг покрупнее:
+      // половинный шаг объясняет ровно те же линии, но дорисовал бы между ними
+      // лишние границы.
+      const better = !best || matched.length > best.matched.length
+        || (matched.length === best.matched.length && step > best.step)
+      if (better) best = { step, matched, tolerance }
+    }
+  }
+  if (!best) return null
+
+  // Собираем сетку от первой найденной линии до последней. Там, где настоящая
+  // линия есть, берём её саму: она точнее вычисленного узла.
+  const { step, matched, tolerance } = best
+  const first = matched[0]
+  const slots = Math.round((matched[matched.length - 1] - first) / step)
+  const result = []
+  for (let k = 0; k <= slots; k++) {
+    const ideal = first + k * step
+    const hit = matched.find((value) => Math.abs(value - ideal) <= tolerance)
+    result.push(hit === undefined ? Math.round(ideal) : hit)
+  }
+  return result
 }
 
 // Горизонтальные линии во всю ширину кадра: верх рабочей области, стык рядов
@@ -233,12 +346,30 @@ function detectPanelGuides(frame) {
   const found = []
   let used = EDGE_ATTEMPTS[0]
 
+  const consider = (lines, attempt, weight = 1) => {
+    if (!isPlausible(lines, width)) return
+    const complete = fillMissingLines(lines)
+    if (found.some((item) => isSameVariant(item.lines, complete))) return
+    found.push({ lines: complete, attempt, score: gridScore(complete, width) * weight })
+  }
+
   for (const attempt of EDGE_ATTEMPTS) {
+    // Полосы по высоте: так находится сетка у терминалов, где панели идут
+    // ровными колонками во весь экран.
     for (const lines of scanBands(gray, width, height, attempt)) {
-      const complete = fillMissingLines(lines)
-      if (found.some((item) => isSameVariant(item.lines, complete))) continue
-      found.push({ lines: complete, attempt, score: gridScore(complete, width) })
+      consider(lines, attempt)
+      // И тот же набор, очищенный до одной сетки: у терминалов со своей
+      // разметкой внутри панели без этого получается каша из двух масштабов.
+      const lattice = fitLattice(lines, width)
+      if (lattice) consider(lattice, attempt)
     }
+
+    // Сквозные линии — отдельный источник: он видит то, чего не видно в
+    // узкой полосе, и на TigerTrade именно он даёт настоящую сетку.
+    const through = fullHeightLines(gray, width, height, attempt.threshold)
+    consider(through, attempt, THROUGH_WEIGHT)
+    const throughLattice = fitLattice(through, width)
+    if (throughLattice) consider(throughLattice, attempt, THROUGH_WEIGHT)
   }
 
   found.sort((a, b) => b.score - a.score)
