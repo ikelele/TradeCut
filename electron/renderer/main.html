@@ -36,12 +36,21 @@
       </div>
 
       <div class="quick-actions">
-        <button type="button" class="secondary" id="open-clips-dir">Открыть папку клипов</button>
+        <button type="button" class="secondary" id="open-clips-dir">Папка клипов</button>
         <button type="button" class="secondary" id="open-crop">Обрезать другой файл...</button>
-        <button type="button" class="secondary" id="open-settings">Настройки...</button>
-        <button type="button" class="secondary" id="open-setup">Пройти первую настройку</button>
-        <button type="button" class="secondary" id="restart">Перезапустить слежение</button>
       </div>
+
+      <details class="advanced trouble">
+        <summary>Если что-то пошло не так</summary>
+        <div class="trouble-body">
+          <div class="quick-actions">
+            <button type="button" class="secondary" id="restart">Перезапустить слежение</button>
+            <button type="button" class="secondary" id="open-setup">Пройти настройку заново</button>
+            <button type="button" class="secondary" id="open-logs">Открыть журнал</button>
+          </div>
+          <p class="field-hint">Перезапуск заново подключается к OBS и перечитывает журнал терминала — помогает, если OBS перезапускали или сделки перестали попадаться. Журнал нужен, когда надо посмотреть, что именно случилось.</p>
+        </div>
+      </details>
 
       <div class="status" id="now-status"></div>
     </section>

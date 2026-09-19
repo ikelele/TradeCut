@@ -146,7 +146,7 @@ document.getElementById('open-clips-dir').addEventListener('click', () => {
   if (clipsDir) window.api.openFolderPath(clipsDir)
 })
 document.getElementById('open-crop').addEventListener('click', () => window.api.openCropWindow())
-document.getElementById('open-settings').addEventListener('click', () => showTab('settings'))
+document.getElementById('open-logs').addEventListener('click', () => window.api.openLogsFolder())
 document.getElementById('open-setup').addEventListener('click', () => window.api.openSetup())
 document.getElementById('open-help').addEventListener('click', () => window.api.openHelp())
 

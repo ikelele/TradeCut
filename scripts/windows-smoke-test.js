@@ -212,6 +212,26 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v && v.before === true && v.after === false && v.nowHidden === true && v.selected === 'true')
 
+  // Пять одинаковых кнопок в ряд — из них две нужны раз в жизни, а одна только
+  // когда уже что-то сломалось. Повседневное осталось на виду, остальное ушло
+  // под крышку.
+  await check(mainWin, 'main.html', 'починочные действия убраны под крышку, повседневные на виду', `
+    (() => {
+      const trouble = document.querySelector('.trouble')
+      const everyday = [...document.querySelectorAll('[data-panel=now] > .quick-actions button')].map((b) => b.textContent)
+      const inside = [...trouble.querySelectorAll('button')].map((b) => b.textContent)
+      return {
+        collapsed: trouble.open === false,
+        everyday,
+        inside,
+        // Кнопка «Настройки...» дублировала вкладку, видную всё время
+        settingsButton: !!document.querySelector('[data-panel=now] #open-settings'),
+        logsWired: typeof window.api.openLogsFolder === 'function'
+      }
+    })()
+  `, (v) => v && v.collapsed === true && v.everyday.length === 2 && v.inside.length === 3
+       && v.settingsButton === false && v.logsWired === true)
+
   await check(mainWin, 'main.html', 'список сделок отрисован во вкладке',
     'document.querySelectorAll(".trade-item").length', (v) => v === 1)
   await check(mainWin, 'main.html', 'кнопка "Вырезать" заблокирована до выбора сделки',
