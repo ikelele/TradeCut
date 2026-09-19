@@ -23,6 +23,10 @@ for (const button of document.querySelectorAll('.tab')) {
   button.addEventListener('click', () => showTab(button.dataset.tab))
 }
 
+// Окно могли открыть сразу на нужной вкладке — например, из меню трея.
+window.api.getInitialTab().then((tab) => { if (tab) showTab(tab) })
+window.api.onShowTab((tab) => { if (tab) showTab(tab) })
+
 // ── Вкладка "Сейчас" ──────────────────────────────────────────────────────
 
 const dotEl = document.getElementById('status-dot')
@@ -142,9 +146,28 @@ document.getElementById('open-clips-dir').addEventListener('click', () => {
   if (clipsDir) window.api.openFolderPath(clipsDir)
 })
 document.getElementById('open-crop').addEventListener('click', () => window.api.openCropWindow())
-document.getElementById('open-settings').addEventListener('click', () => window.api.openSettings())
+document.getElementById('open-settings').addEventListener('click', () => showTab('settings'))
 document.getElementById('open-setup').addEventListener('click', () => window.api.openSetup())
 document.getElementById('open-help').addEventListener('click', () => window.api.openHelp())
+
+// Перезапуск переехал сюда из трея: это действие на случай «что-то заклинило»,
+// и ему место рядом с тем, что показывает состояние.
+document.getElementById('restart').addEventListener('click', async () => {
+  const button = document.getElementById('restart')
+  button.disabled = true
+  nowStatusEl.className = 'status busy'
+  nowStatusEl.textContent = 'Останавливаю и подключаюсь заново...'
+  try {
+    const result = await window.api.restartWatching()
+    nowStatusEl.className = result.error ? 'status error' : 'status ok'
+    nowStatusEl.textContent = result.error || 'Слежение перезапущено.'
+  } catch (error) {
+    nowStatusEl.className = 'status error'
+    nowStatusEl.textContent = `Не получилось: ${error.message || error}`
+  } finally {
+    button.disabled = false
+  }
+})
 
 // ── Вкладка "Клипы" ───────────────────────────────────────────────────────
 

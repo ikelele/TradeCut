@@ -61,7 +61,9 @@ for (const channel of handled) {
 notes.push(`каналов IPC: ${requested.length}, все обработаны`)
 
 // ── 3. getElementById из окна должен существовать в его разметке ───────────
-const pageOfScript = { 'settings.js': 'settings.html', 'crop.js': 'crop.html', 'main.js': 'main.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
+// Настройки и список сделок живут вкладками главного окна, поэтому их
+// скрипты проверяются против main.html.
+const pageOfScript = { 'settings.js': 'main.html', 'crop.js': 'crop.html', 'main.js': 'main.html', 'help.js': 'help.html', 'setup.js': 'setup.html' }
 for (const [script, page] of Object.entries(pageOfScript)) {
   if (!rendererJs.includes(script) || !rendererHtml.includes(page)) continue
   const source = read('electron', 'renderer', script)
@@ -78,7 +80,7 @@ for (const [script, page] of Object.entries(pageOfScript)) {
 
 // Поля настроек из FIELDS — там id перечислены отдельным списком
 const settingsJs = read('electron', 'renderer', 'settings.js')
-const settingsHtml = read('electron', 'renderer', 'settings.html')
+const settingsHtml = read('electron', 'renderer', 'main.html')
 const settingsIds = new Set([...matchAll(settingsHtml, /id="([\w-]+)"/g)])
 const fieldIds = unique(matchAll(settingsJs, /\{ id: '([\w-]+)'/g))
 for (const id of fieldIds) {

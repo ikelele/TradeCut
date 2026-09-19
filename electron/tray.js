@@ -106,10 +106,8 @@ function createTray({
   onExit,
   onPickStakan,
   onTogglePause,
-  onOpenTradesWindow,
-  onOpenCropWindow,
+  onOpenMainWindow,
   onOpenCropFor,
-  onOpenSettingsWindow,
   onSaveManualReplay
 }) {
   let historyLimit = trayHistoryLimit
@@ -238,11 +236,7 @@ function createTray({
     const template = [
       { label: statusText, enabled: false },
       { type: 'separator' },
-      {
-        label: paused ? 'Возобновить' : 'Приостановить',
-        toolTip: 'Остановить слежение и отключиться от OBS, пока не торгуешь',
-        click: () => onTogglePause()
-      }
+      { label: 'Открыть TradeCut', click: () => onOpenMainWindow() }
     ]
 
     // Доступно всегда, независимо от того, были ли сегодня сделки: это просто
@@ -271,10 +265,12 @@ function createTray({
     }
 
     template.push(
-      { label: `Открыть TradeCut (сделок: ${recentClips.length})`, click: () => onOpenTradesWindow() },
-      { label: 'Обрезать произвольный файл...', click: () => onOpenCropWindow() },
       { type: 'separator' },
-      { label: 'Настройки...', click: () => onOpenSettingsWindow() },
+      {
+        label: paused ? 'Возобновить' : 'Приостановить',
+        toolTip: 'Остановить слежение и отключиться от OBS, пока не торгуешь',
+        click: () => onTogglePause()
+      },
       {
         label: 'Запускать при старте Windows',
         type: 'checkbox',
@@ -282,11 +278,6 @@ function createTray({
         enabled: Boolean(autostartAvailable),
         toolTip: autostartAvailable ? '' : 'Доступно только в собранном приложении',
         click: () => onToggleAutostart()
-      },
-      {
-        label: 'Перезапустить',
-        toolTip: 'Остановить и заново подключиться к OBS/логам',
-        click: () => onRestart()
       },
       { type: 'separator' },
       { label: 'Выход', click: () => onExit() }

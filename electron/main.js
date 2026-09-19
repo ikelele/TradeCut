@@ -7,7 +7,7 @@ const { createUpdater } = require('./updater')
 const { createTray } = require('./tray')
 const { createNotifier } = require('./notifier')
 const autostart = require('./autostart')
-const { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow } = require('./windows')
+const { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openHelpWindow, openSetupWindow } = require('./windows')
 
 const APP_USER_MODEL_ID = 'com.tradecut.app'
 
@@ -120,6 +120,15 @@ function main() {
     }
   }
 
+  let pendingMainTab = null
+
+  function openMainOnTab(tab) {
+    const existing = getMainWindow()
+    pendingMainTab = tab
+    openMainWindow()
+    if (existing) existing.webContents.send('main:show-tab', tab)
+  }
+
   function pushStatusToWindow() {
     const win = getMainWindow()
     if (win) win.webContents.send('status:changed', statusForWindow())
@@ -215,7 +224,7 @@ function main() {
       // Ход загрузки — в окно настроек, если оно открыто. Больше ста мегабайт
       // без единого признака жизни выглядят как зависшая программа.
       onEvent: (event) => {
-        const win = getSettingsWindow()
+        const win = getMainWindow()
         if (win) win.webContents.send('updates:progress', event)
         if (event.stage === 'downloaded' && notifier) {
           notifier.notifyIssue(`Обновление ${event.version} загружено — установится при перезапуске`)
@@ -297,7 +306,7 @@ function main() {
 
     // Последний шаг помощника отправляет сюда: всё остальное живёт со
     // значениями по умолчанию, но взглянуть на них один раз стоит.
-    ipcMain.on('settings:open', () => openSettingsWindow())
+    ipcMain.on('settings:open', () => openMainOnTab('settings'))
 
     ipcMain.handle('app:version', () => ({ version: app.getVersion(), installKind: getInstallKind() }))
 
@@ -315,6 +324,20 @@ function main() {
       if (dirPath) shell.openPath(dirPath)
     })
     ipcMain.on('window:open-main', () => openMainWindow())
+
+    ipcMain.handle('main:initial-tab', () => {
+      const tab = pendingMainTab
+      pendingMainTab = null
+      return tab
+    })
+
+    // Перезапуск слежения переехал из трея в окно: это действие на случай
+    // «что-то заклинило», и ему место рядом с тем, что показывает состояние.
+    ipcMain.handle('app:restart', async () => {
+      if (!appCore) return { error: 'Слежение ещё не запущено' }
+      await restartWatchingInBackground()
+      return { ok: true }
+    })
 
     // Проверка обновлений по кнопке. В отличие от той, что при запуске, эта
     // отвечает всегда — окно настроек показывает итог у себя. Молчание в ответ
@@ -638,11 +661,9 @@ function main() {
       onPickStakan: (clipPath, stakanIndex, options) => {
         void appCore.cropRecentClip(clipPath, stakanIndex, options)
       },
-      onOpenTradesWindow: () => openMainWindow(),
-      onOpenCropWindow: () => openCropWindow(),
+      onOpenMainWindow: () => openMainWindow(),
       onOpenCropFor: (clipPath) => openCropWindowFor(clipPath),
       onSaveManualReplay: (durationSec) => appCore.saveManualReplay(durationSec),
-      onOpenSettingsWindow: () => openSettingsWindow(),
       onExit: async () => {
         log('Остановка (выход из трея)...')
         try {

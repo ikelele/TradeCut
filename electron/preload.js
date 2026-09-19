@@ -23,6 +23,13 @@ contextBridge.exposeInMainWorld('api', {
   openSetup: () => ipcRenderer.send('setup:open'),
   openSettings: () => ipcRenderer.send('settings:open'),
   openMain: () => ipcRenderer.send('window:open-main'),
+  getInitialTab: () => ipcRenderer.invoke('main:initial-tab'),
+  onShowTab: (listener) => {
+    const handler = (_event, tab) => listener(tab)
+    ipcRenderer.on('main:show-tab', handler)
+    return () => ipcRenderer.off('main:show-tab', handler)
+  },
+  restartWatching: () => ipcRenderer.invoke('app:restart'),
 
   getAppVersion: () => ipcRenderer.invoke('app:version'),
 

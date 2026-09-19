@@ -676,3 +676,36 @@ select:focus { outline: 1px solid var(--accent); }
   gap: 8px;
   margin-top: 14px;
 }
+
+/* Свёрнутые дополнительные настройки. Новичку нужны пять полей сверху, а
+   остальные двадцать два он пролистывал, не понимая, опасно ли их трогать. */
+.advanced {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+
+.advanced > summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.advanced > summary:hover { color: var(--text); }
+
+.advanced[open] > summary { border-bottom: 1px solid var(--border); }
+
+/* Внутри раскрытого блока разделы уже не нуждаются в собственной рамке:
+   двойная рамка на рамке выглядит как ошибка вёрстки. */
+.advanced > fieldset {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  margin: 0;
+}
+
+.advanced > fieldset:last-of-type { border-bottom: 0; }

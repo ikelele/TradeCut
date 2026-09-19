@@ -1,6 +1,5 @@
-const statusEl = document.getElementById('status')
+const statusEl = document.getElementById('settings-status')
 const saveButton = document.getElementById('save')
-const closeButton = document.getElementById('close')
 
 // Соответствие "id поля в форме" -> "путь в config.json". Один список задаёт и
 // заполнение формы, и сборку конфига обратно — иначе легко забыть поле в одном
@@ -176,8 +175,8 @@ function renderPresets(presets) {
   }
 }
 
-document.getElementById('open-crop').addEventListener('click', () => window.api.openCropWindow())
-document.getElementById('open-help').addEventListener('click', () => window.api.openHelp())
+// Кнопка «?» живёт в полосе вкладок главного окна, её вешает main.js
+document.getElementById('open-areas').addEventListener('click', () => window.api.openCropWindow())
 
 function fillForm(config) {
   renderPresets(config.clip && config.clip.cropPresets)
@@ -236,7 +235,6 @@ saveButton.addEventListener('click', async () => {
   }
 })
 
-closeButton.addEventListener('click', () => window.api.closeWindow())
 
 // ── Версия и обновления ───────────────────────────────────────────────────
 

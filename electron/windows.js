@@ -112,11 +112,6 @@ function raiseWindow(win) {
   return win
 }
 
-// Окну настроек шлётся ход загрузки обновления — если оно открыто.
-function getSettingsWindow() {
-  return settingsWindow && !settingsWindow.isDestroyed() ? settingsWindow : null
-}
-
 // Главное окно. Одно на программу: это её "лицо", а не инструмент, и две
 // копии одного и того же лица бессмысленны.
 //
@@ -190,22 +185,4 @@ function openSetupWindow() {
   return setupWindow
 }
 
-// Окно настроек — единственное, как и окно сделок: незачем открывать две
-// копии, которые будут перезаписывать config.json друг за другом.
-let settingsWindow = null
-
-function openSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    return raiseWindow(settingsWindow)
-  }
-  settingsWindow = createWindow({
-    page: 'settings.html',
-    width: 700,
-    height: 720,
-    title: 'TradeCut — настройки'
-  })
-  settingsWindow.on('closed', () => { settingsWindow = null })
-  return settingsWindow
-}
-
-module.exports = { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openSettingsWindow, getSettingsWindow, openHelpWindow, openSetupWindow }
+module.exports = { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openHelpWindow, openSetupWindow }

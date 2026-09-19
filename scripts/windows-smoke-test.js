@@ -132,6 +132,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('config:save', (_event, incoming) => incoming)
   // Последний шаг помощника зовёт окно настроек — в тесте открывать его не надо
   ipcMain.on('settings:open', () => {})
+  ipcMain.handle('main:initial-tab', () => null)
+  ipcMain.handle('app:restart', () => ({ ok: true }))
   ipcMain.handle('app:version', () => ({ version: '9.9.9', installKind: 'installed' }))
   // Главное окно спрашивает состояние слежения и умеет звать повтор
   let statusAnswer = {
@@ -160,15 +162,58 @@ app.whenReady().then(async () => {
   let updateAnswerIndex = 0
   ipcMain.handle('updates:check', () => UPDATE_ANSWERS[Math.min(updateAnswerIndex++, UPDATE_ANSWERS.length - 1)])
 
-  const settings = await openPage('settings.html')
-  await check(settings, 'settings.html', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
-  await check(settings, 'settings.html', 'поле адреса OBS заполнено из конфига',
+  const mainWin = await openPage('main.html')
+
+  // Главное окно отвечает на вопрос "работает ли программа" словами, а не
+  // цветом значка, который надо знать наизусть.
+  await check(mainWin, 'main.html', 'состояние показано словами и с подсказкой, что делать', `
+    (() => ({
+      dot: document.getElementById('status-dot').className,
+      title: document.getElementById('status-title').textContent,
+      detail: document.getElementById('status-detail').textContent
+    }))()
+  `, (v) => v && /status-dot-warn/.test(v.dot) && /Нет связи с OBS/.test(v.title)
+       && /Пароль от OBS не задан/.test(v.detail))
+
+  await check(mainWin, 'main.html', 'сводка настроек собрана',
+    '[...document.querySelectorAll("#facts dt")].map(el => el.textContent)',
+    (v) => Array.isArray(v) && v.includes('Терминал') && v.includes('Клипы') && v.includes('Версия'))
+
+  await check(mainWin, 'main.html', 'кнопки повтора взяты из настроек',
+    '[...document.querySelectorAll("[data-role=replay] .option")].map(b => b.textContent)',
+    (v) => Array.isArray(v) && v.length === config.clip.replayPresetsSec.length && v[0] === '15 сек')
+
+  await check(mainWin, 'main.html', 'вкладки переключаются', `
+    (() => {
+      const clipsTab = [...document.querySelectorAll('.tab')].find(t => t.dataset.tab === 'clips')
+      const before = document.querySelector('[data-panel=clips]').hidden
+      clipsTab.click()
+      return {
+        before,
+        after: document.querySelector('[data-panel=clips]').hidden,
+        nowHidden: document.querySelector('[data-panel=now]').hidden,
+        selected: clipsTab.getAttribute('aria-selected')
+      }
+    })()
+  `, (v) => v && v.before === true && v.after === false && v.nowHidden === true && v.selected === 'true')
+
+  await check(mainWin, 'main.html', 'список сделок отрисован во вкладке',
+    'document.querySelectorAll(".trade-item").length', (v) => v === 1)
+  await check(mainWin, 'main.html', 'кнопка "Вырезать" заблокирована до выбора сделки',
+    'document.getElementById("run").disabled', (v) => v === true)
+  await check(mainWin, 'main.html', 'выбор сделки разблокирует кнопку',
+    'document.querySelector(".trade-item").click(); document.getElementById("run").disabled', (v) => v === false)
+
+
+  const settings = mainWin
+  await check(settings, 'main.html (настройки)', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
+  await check(settings, 'main.html (настройки)', 'поле адреса OBS заполнено из конфига',
     'document.getElementById("obs-url").value', (v) => typeof v === 'string' && v.length > 0)
-  await check(settings, 'settings.html', 'чекбокс объединения сделок отражает конфиг',
+  await check(settings, 'main.html (настройки)', 'чекбокс объединения сделок отражает конфиг',
     'document.getElementById("merge-enabled").checked', (v) => v === Boolean(config.clip.mergeTradesEnabled))
   // Ноль тут значит "не делить кадр", и поле должно быть ПУСТЫМ: ноль в графе
   // "на сколько частей" выглядит как поломка, а не как осознанная настройка.
-  await check(settings, 'settings.html', 'количество частей кадра: ноль показывается пустым полем', `
+  await check(settings, 'main.html (настройки)', 'количество частей кадра: ноль показывается пустым полем', `
     (() => {
       const el = document.getElementById('stakan-count')
       const shown = el.value
@@ -181,13 +226,13 @@ app.whenReady().then(async () => {
        && (v.expected > 0 ? Number(v.shown) === v.expected : v.shown === ''))
   // Удаление отдельных клипов серии — единственное поведение по умолчанию,
   // которое стирает файлы, поэтому проверяем именно исходное состояние галки.
-  await check(settings, 'settings.html', 'галка "резать из трея без звука" отражает конфиг',
+  await check(settings, 'main.html (настройки)', 'галка "резать из трея без звука" отражает конфиг',
     'document.getElementById("tray-crop-muted").checked', (v) => v === Boolean(config.clip.trayCropMuted))
-  await check(settings, 'settings.html', 'галка "оставлять отдельные клипы серии" отражает конфиг',
+  await check(settings, 'main.html (настройки)', 'галка "оставлять отдельные клипы серии" отражает конфиг',
     'document.getElementById("keep-parts").checked', (v) => v === Boolean(config.clip.keepMergedParts))
-  await check(settings, 'settings.html', 'из настроек можно открыть справку',
+  await check(settings, 'main.html (настройки)', 'из настроек можно открыть справку',
     'typeof window.api.openHelp === "function" && !!document.getElementById("open-help")', (v) => v === true)
-  await check(settings, 'settings.html', 'списки пресетов показываются строкой через запятую', `
+  await check(settings, 'main.html (настройки)', 'списки пресетов показываются строкой через запятую', `
     (() => {
       const replay = document.getElementById('replay-presets')
       const speed = document.getElementById('speed-presets')
@@ -195,11 +240,11 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v && v.replay === config.clip.replayPresetsSec.join(', ')
        && v.speed === config.clip.speedPresets.join(', '))
-  await check(settings, 'settings.html', 'список своих областей кадра есть',
+  await check(settings, 'main.html (настройки)', 'список своих областей кадра есть',
     '!!document.querySelector("[data-role=preset-list]")', (v) => v === true)
   // Выбирать «что вырезать сразу» можно только из настроенных областей —
   // список строится из них же, плюс «не вырезать» первым пунктом.
-  await check(settings, 'settings.html', 'автообрезка предлагает настроенные области и «не вырезать»',
+  await check(settings, 'main.html (настройки)', 'автообрезка предлагает настроенные области и «не вырезать»',
     `(() => {
        const select = document.getElementById('auto-crop-area')
        return {
@@ -211,7 +256,7 @@ app.whenReady().then(async () => {
     (v) => v && v.options[0] === 'Не вырезать' && v.firstValue === ''
       && v.options.includes('Левый стакан') && v.selected === '')
 
-  await check(settings, 'settings.html', 'выбранная область уезжает в конфиг при сохранении',
+  await check(settings, 'main.html (настройки)', 'выбранная область уезжает в конфиг при сохранении',
     `(() => {
        document.getElementById('auto-crop-area').value = 'Левый стакан'
        document.getElementById('auto-crop-delete-full').checked = true
@@ -225,25 +270,25 @@ app.whenReady().then(async () => {
      })()`,
     (v) => v && v.area === 'Левый стакан' && v.deleteFull === true && v.detect === true)
 
-  await check(settings, 'settings.html', 'из настроек можно открыть окно настройки областей',
+  await check(settings, 'main.html (настройки)', 'из настроек можно открыть окно настройки областей',
     'typeof window.api.openCropWindow === "function" && !!document.getElementById("open-crop")', (v) => v === true)
-  await check(settings, 'settings.html', 'сохранение из настроек не теряет настроенные области', `
+  await check(settings, 'main.html (настройки)', 'сохранение из настроек не теряет настроенные области', `
     (() => {
       const collected = collectForm()
       return Array.isArray(collected.clip.cropPresets)
     })()
   `, (v) => v === true)
-  await check(settings, 'settings.html', 'папка клипов заполнена',
+  await check(settings, 'main.html (настройки)', 'папка клипов заполнена',
     'document.getElementById("output-dir").value', (v) => typeof v === 'string' && v.length > 0)
-  await check(settings, 'settings.html', 'папка для повторов из трея заполнена',
+  await check(settings, 'main.html (настройки)', 'папка для повторов из трея заполнена',
     'document.getElementById("manual-replay-dir").value', (v) => v === config.clip.manualReplayOutputDir)
-  await check(settings, 'settings.html', 'есть переключатель терминалов Vataga/TigerTrade',
+  await check(settings, 'main.html (настройки)', 'есть переключатель терминалов Vataga/TigerTrade',
     '[...document.querySelectorAll("[data-role=terminal] .option")].map(b => b.textContent)',
     (v) => Array.isArray(v) && v.includes('Vataga') && v.includes('TigerTrade'))
-  await check(settings, 'settings.html', 'выбран терминал из конфига',
+  await check(settings, 'main.html (настройки)', 'выбран терминал из конфига',
     'document.querySelector("[data-role=terminal] .option[aria-pressed=true]").textContent',
     (v) => v === (config.terminal.type === 'tigertrade' ? 'TigerTrade' : 'Vataga'))
-  await check(settings, 'settings.html', 'переключение терминала меняет подсказку про путь', `
+  await check(settings, 'main.html (настройки)', 'переключение терминала меняет подсказку про путь', `
     (() => {
       const buttons = [...document.querySelectorAll("[data-role=terminal] .option")]
       const tiger = buttons.find(b => b.textContent === "TigerTrade")
@@ -265,7 +310,7 @@ app.whenReady().then(async () => {
   }
 
   await sendProgress({ stage: 'downloading', percent: 42, transferred: 57 * 1024 * 1024, total: 136 * 1024 * 1024 })
-  await check(settings, 'settings.html', 'ход загрузки обновления виден в окне',
+  await check(settings, 'main.html (настройки)', 'ход загрузки обновления виден в окне',
     `(() => {
        const el = document.getElementById('update-status')
        return { cls: el.className, text: el.textContent }
@@ -273,21 +318,21 @@ app.whenReady().then(async () => {
     (v) => v && /42%/.test(v.text) && /57 из 136 МБ/.test(v.text))
 
   await sendProgress({ stage: 'downloaded', version: '9.9.10' })
-  await check(settings, 'settings.html', 'после загрузки сказано, что ставить будет при перезапуске',
+  await check(settings, 'main.html (настройки)', 'после загрузки сказано, что ставить будет при перезапуске',
     `(() => {
        const el = document.getElementById('update-status')
        return { cls: el.className, text: el.textContent }
      })()`,
     (v) => v && /ok/.test(v.cls) && /9\.9\.10 загружена/.test(v.text) && /перезапуске/.test(v.text))
 
-  await check(settings, 'settings.html', 'версия программы показана в настройках',
+  await check(settings, 'main.html (настройки)', 'версия программы показана в настройках',
     'document.getElementById("app-version").textContent',
     (v) => typeof v === 'string' && v.includes('9.9.9') && v.includes('установленная'))
 
   // Кнопка проверки обязана отвечать на каждое нажатие, в том числе "у тебя
   // последняя версия": проверка при запуске в этом случае молчит осознанно, но
   // молчание в ответ на нажатую кнопку читается как поломка.
-  await check(settings, 'settings.html', 'проверка обновлений отвечает на каждое нажатие', `
+  await check(settings, 'main.html (настройки)', 'проверка обновлений отвечает на каждое нажатие', `
     (async () => {
       const button = document.getElementById('check-updates')
       const status = document.getElementById('update-status')
@@ -681,48 +726,6 @@ app.whenReady().then(async () => {
   `, (v) => v && /4 из 4/.test(v.counter || '') && v.settingsShown === true
        && v.nextLabel === 'Готово' && v.skipHidden === true && v.wired === true
        && /ok/.test(v.statusCls) && /закончил/.test(v.statusText))
-
-  const mainWin = await openPage('main.html')
-
-  // Главное окно отвечает на вопрос "работает ли программа" словами, а не
-  // цветом значка, который надо знать наизусть.
-  await check(mainWin, 'main.html', 'состояние показано словами и с подсказкой, что делать', `
-    (() => ({
-      dot: document.getElementById('status-dot').className,
-      title: document.getElementById('status-title').textContent,
-      detail: document.getElementById('status-detail').textContent
-    }))()
-  `, (v) => v && /status-dot-warn/.test(v.dot) && /Нет связи с OBS/.test(v.title)
-       && /Пароль от OBS не задан/.test(v.detail))
-
-  await check(mainWin, 'main.html', 'сводка настроек собрана',
-    '[...document.querySelectorAll("#facts dt")].map(el => el.textContent)',
-    (v) => Array.isArray(v) && v.includes('Терминал') && v.includes('Клипы') && v.includes('Версия'))
-
-  await check(mainWin, 'main.html', 'кнопки повтора взяты из настроек',
-    '[...document.querySelectorAll("[data-role=replay] .option")].map(b => b.textContent)',
-    (v) => Array.isArray(v) && v.length === config.clip.replayPresetsSec.length && v[0] === '15 сек')
-
-  await check(mainWin, 'main.html', 'вкладки переключаются', `
-    (() => {
-      const clipsTab = [...document.querySelectorAll('.tab')].find(t => t.dataset.tab === 'clips')
-      const before = document.querySelector('[data-panel=clips]').hidden
-      clipsTab.click()
-      return {
-        before,
-        after: document.querySelector('[data-panel=clips]').hidden,
-        nowHidden: document.querySelector('[data-panel=now]').hidden,
-        selected: clipsTab.getAttribute('aria-selected')
-      }
-    })()
-  `, (v) => v && v.before === true && v.after === false && v.nowHidden === true && v.selected === 'true')
-
-  await check(mainWin, 'main.html', 'список сделок отрисован во вкладке',
-    'document.querySelectorAll(".trade-item").length', (v) => v === 1)
-  await check(mainWin, 'main.html', 'кнопка "Вырезать" заблокирована до выбора сделки',
-    'document.getElementById("run").disabled', (v) => v === true)
-  await check(mainWin, 'main.html', 'выбор сделки разблокирует кнопку',
-    'document.querySelector(".trade-item").click(); document.getElementById("run").disabled', (v) => v === false)
 
   for (const note of notes) console.log(note)
   if (problems.length > 0) {

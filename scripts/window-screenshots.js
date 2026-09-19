@@ -103,9 +103,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('replay:save', () => ({ clipPath: 'C:/Trades/replays/повтор.mp4' }))
   ipcMain.on('folder:open', () => {})
   ipcMain.on('window:open-main', () => {})
+  ipcMain.handle('main:initial-tab', () => null)
+  ipcMain.handle('app:restart', () => ({ ok: true }))
 
   await shoot('main.html', { width: 760, height: 620 })
-  await shoot('settings.html', { width: 700, height: 720 })
+  await shoot('main.html', { width: 760, height: 620 }, `
+    new Promise((resolve) => {
+      [...document.querySelectorAll('.tab')].find(t => t.dataset.tab === 'settings').click()
+      setTimeout(resolve, 300)
+    })
+  `)
   await shoot('setup.html', { width: 660, height: 700 })
 
   // Помощник после проверки OBS — тот вид, ради которого он и сделан
