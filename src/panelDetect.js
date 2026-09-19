@@ -49,6 +49,13 @@ const MIN_PANEL_RATIO = 0.025
 const MAX_VARIANTS = 4
 // Ближе этого линии считаются одной и той же
 const CLUSTER_GAP = 4
+// Во сколько раз неровность промежутков снижает оценку набора. Подобрано по
+// живым снимкам: при меньшем значении наборы внутренних линий стакана иногда
+// обходили настоящую сетку панелей.
+const UNEVENNESS_PENALTY = 3
+// Насколько промежуток может отличаться от кратного шагу сетки, чтобы считать
+// его слипшимися панелями, а не панелью другого размера.
+const GRID_TOLERANCE = 0.25
 
 // Кадр приходит из canvas окна (RGBA) либо из ffmpeg в тестах. Яркость берём
 // упрощённо: точные коэффициенты тут ничего не меняют, важен только перепад.
@@ -126,6 +133,64 @@ function isSameVariant(a, b) {
   return a.every((value, index) => Math.abs(value - b[index]) <= CLUSTER_GAP)
 }
 
+// Насколько набор линий похож на сетку панелей.
+//
+// Просто "линии нашлись" ничего не значит: внутри стакана своих вертикальных
+// линий больше, чем границ панелей, и на части снимков детектор радостно
+// возвращал восемнадцать линий там, где панелей шесть. Отличить одно от
+// другого можно по тому, как терминал раскладывает панели — плиткой:
+//
+//   промежутки между настоящими границами почти одинаковые;
+//   сами границы покрывают кадр от края до края.
+//
+// У случайного набора внутренних линий таблицы не выполняется ни то, ни другое.
+function gridScore(lines, width) {
+  if (lines.length < 3) return 0
+
+  const gaps = []
+  for (let i = 1; i < lines.length; i++) gaps.push(lines[i] - lines[i - 1])
+  const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length
+  if (mean <= 0) return 0
+
+  // Коэффициент вариации: 0 — промежутки идеально ровные.
+  const spread = Math.sqrt(gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length) / mean
+  const span = (lines[lines.length - 1] - lines[0]) / width
+
+  return span / (1 + spread * UNEVENNESS_PENALTY)
+}
+
+// Достраивание пропущенных границ.
+//
+// Панели разложены плиткой, поэтому промежутки между границами почти
+// одинаковые. Если один промежуток оказался ровно вдвое (втрое) шире
+// остальных — там почти наверняка потерялась граница: разделитель мог быть
+// бледнее соседних или его перекрыло что-то в той полосе, по которой шёл
+// поиск. Достраиваем её по шагу сетки.
+//
+// Кратность проверяется строго: промежуток в полтора раза шире — это не
+// пропущенная граница, а просто панель другого размера, и выдумывать там
+// линию нельзя.
+function fillMissingLines(lines) {
+  if (lines.length < 3) return lines
+
+  const gaps = []
+  for (let i = 1; i < lines.length; i++) gaps.push(lines[i] - lines[i - 1])
+  const sorted = [...gaps].sort((a, b) => a - b)
+  const step = sorted[Math.floor(sorted.length / 2)] // медиана устойчивее среднего
+  if (step <= 0) return lines
+
+  const filled = [lines[0]]
+  for (let i = 1; i < lines.length; i++) {
+    const gap = lines[i] - lines[i - 1]
+    const parts = Math.round(gap / step)
+    if (parts >= 2 && Math.abs(gap - parts * step) <= step * GRID_TOLERANCE) {
+      for (let k = 1; k < parts; k++) filled.push(Math.round(lines[i - 1] + step * k))
+    }
+    filled.push(lines[i])
+  }
+  return filled
+}
+
 // Перебор полос по высоте при одной настройке порога.
 function scanBands(gray, width, height, { threshold, coverage }) {
   const seen = new Map() // набор линий -> сколько полос его дали
@@ -161,29 +226,25 @@ function detectPanelGuides(frame) {
 
   const gray = frame.gray || toGrayscale(frame)
 
-  let variants = []
+  // Собираем находки со ВСЕХ настроек и выбираем не по тому, какая сработала
+  // первой, а по тому, какая больше похожа на сетку панелей. Порог перепада
+  // сам по себе ничего не говорит о правильности: на одном терминале верный
+  // ответ даёт строгая настройка, на другом — мягкая.
+  const found = []
   let used = EDGE_ATTEMPTS[0]
 
   for (const attempt of EDGE_ATTEMPTS) {
-    const found = scanBands(gray, width, height, attempt)
-    if (found.length === 0) continue
-    variants = found
-    used = attempt
-    break
-  }
-
-  // Добираем варианты с более мягких настроек — но только в свободные места.
-  // Главный ответ остаётся за той настройкой, что сработала первой: слабый
-  // перепад чаще оказывается разметкой внутри стакана, чем границей панели.
-  for (const attempt of EDGE_ATTEMPTS) {
-    if (variants.length >= MAX_VARIANTS) break
-    if (attempt === used) continue
-    for (const candidate of scanBands(gray, width, height, attempt)) {
-      if (variants.length >= MAX_VARIANTS) break
-      if (variants.some((existing) => isSameVariant(existing, candidate))) continue
-      variants.push(candidate)
+    for (const lines of scanBands(gray, width, height, attempt)) {
+      const complete = fillMissingLines(lines)
+      if (found.some((item) => isSameVariant(item.lines, complete))) continue
+      found.push({ lines: complete, attempt, score: gridScore(complete, width) })
     }
   }
+
+  found.sort((a, b) => b.score - a.score)
+  if (found.length > 0) used = found[0].attempt
+
+  const variants = found.slice(0, MAX_VARIANTS).map((item) => item.lines)
 
   return {
     vertical: variants[0] || [],
