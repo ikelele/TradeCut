@@ -420,15 +420,38 @@ function main() {
     // Поиск границ панелей терминала по кадру видео. Считается здесь, а не в
     // окне: кадр 3440x1440 — это ~20 МБ пикселей, и передавать их в окно ради
     // разбора незачем, наружу уходит только короткий список линий.
+    // Сколько секунд отступать от кадра, который человек видит в окне, чтобы
+    // взять соседние. Меньше — попадём на тот же кадр, больше — на другую
+    // раскладку, если окна в терминале за это время подвинули.
+    const PANEL_FRAME_OFFSETS_SEC = [-3, 0, 3]
+
     ipcMain.handle('panels:detect', async (_event, clipPath, timeSec) => {
-      const { probeVideoSize } = require('../src/clipper')
+      const { probeVideoSize, probeDurationSeconds } = require('../src/clipper')
       const { grabFrameRgba } = require('../src/videoFrame')
-      const { detectPanelGuides } = require('../src/panelDetect')
+      const { detectPanelGuidesFromFrames } = require('../src/panelDetect')
 
       const size = await probeVideoSize(clipPath)
-      const frame = await grabFrameRgba(clipPath, timeSec, size)
-      const guides = detectPanelGuides(frame)
-      log(`Границы панелей по кадру ${clipPath}: вариантов ${guides.variants.length}, линий в лучшем ${guides.vertical.length}`)
+      const duration = await probeDurationSeconds(clipPath)
+
+      // По нескольким кадрам, а не по одному: на одном кадре ответ скачет —
+      // см. комментарий у detectPanelGuidesFromFrames.
+      const moments = []
+      for (const offset of PANEL_FRAME_OFFSETS_SEC) {
+        const at = Math.max(0, Math.min((timeSec || 0) + offset, Math.max(0, duration - 0.1)))
+        if (!moments.some((known) => Math.abs(known - at) < 0.5)) moments.push(at)
+      }
+
+      const frames = []
+      for (const at of moments) {
+        try {
+          frames.push(await grabFrameRgba(clipPath, at, size))
+        } catch (error) {
+          log(`Кадр на ${Math.round(at)}с не достался: ${error.message}`)
+        }
+      }
+
+      const guides = detectPanelGuidesFromFrames(frames)
+      log(`Границы панелей по ${frames.length} кадрам ${clipPath}: вариантов ${guides.variants.length}, линий в лучшем ${guides.vertical.length}`)
       return { ...guides, width: size.width, height: size.height }
     })
 

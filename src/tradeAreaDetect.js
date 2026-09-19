@@ -15,6 +15,23 @@ const { resolveCropRect } = require('./cropRect')
 //
 // На восемнадцати настоящих сделках из записей автора уверенный ответ совпал с
 // торгуемой монетой во всех восемнадцати случаях.
+//
+// Но это признак ОДНОГО терминала. У TigerTrade внизу панели ничего такого
+// нет: на светлой теме там 0.0-0.7% цветного, на тёмной — 10-11%, но сразу у
+// всех панелей, потому что внизу у каждой свой мини-график. Замерено на
+// четырёх записях: ноль верных ответов из четырёх.
+//
+// Маркер у TigerTrade всё-таки есть — плашка PnL и подсветка позиции в ленте,
+// — только он НЕ на дне панели, а на уровне цены, и ездит по вертикали вместе
+// с ней. Искать его «где-то в панели» бесполезно: у графика внутри панели
+// цветного всегда больше. Зато на одной высоте у всех панелей нарисовано одно
+// и то же — те же строки ленты, тот же кусок графика, — и панель с позицией на
+// своём уровне отрывается от соседей в десятки раз. Это второй признак.
+//
+// Второй признак ЗАПАСНОЙ, а не равный. На 28 записях Vataga, где первый
+// уверен, второй спорил с ним в семи случаях — если дать им равные голоса,
+// проверенные ответы превратятся в ничью. Поэтому порядок такой: отвечает
+// первый; второй подключается, только когда первый промолчал.
 
 // Высота полосы, в которой ищем цвет. Доля от высоты области, а не пиксели:
 // при записи в 1080p весь интерфейс терминала мельче ровно во столько же раз.
@@ -28,6 +45,22 @@ const MIN_SCORE = 0.05
 // программа не знает, какая из них та самая. Лучше честно ответить "не знаю",
 // чем молча вырезать чужую монету.
 const MIN_MARGIN = 4
+
+// Высота пробной полосы для второго признака, в долях высоты кадра
+const BAND_RATIO = 0.04
+// Заголовок панели пропускаем. Там подсвечена ВКЛАДКА, по которой последний
+// раз щёлкнули мышью: она почти всегда совпадает с торгуемой панелью, и
+// соблазн велик — но это признак про мышь, а не про сделку. Щёлкнул после
+// выхода в соседнюю панель, и он соврёт.
+const SKIP_TOP_RATIO = 0.03
+// Чтобы деление на почти ноль не давало бесконечный отрыв
+const SHARE_FLOOR = 0.002
+// Полосу бледнее этого за маркер не считаем
+const MIN_BAND_SHARE = 0.01
+// Во сколько раз лидер должен опережать вторую панель, чтобы второй признак
+// вообще подал голос. Замерено: у ошибочного ответа отрыв был в 1.05 раза, у
+// верных — от 1.4 до 5.4.
+const STANDOUT_GATE = 1.3
 
 // Серый интерфейс терминала никогда так не выглядит, а красная и зелёная
 // плашки — всегда.
@@ -57,6 +90,68 @@ function scoreArea(frame, rect) {
     }
   }
   return vivid / pixels
+}
+
+// Доля насыщенно-цветных пикселей в прямоугольнике
+function shareIn(frame, fromX, toX, fromY, toY) {
+  const x0 = Math.max(0, Math.min(frame.width, fromX))
+  const x1 = Math.max(0, Math.min(frame.width, toX))
+  const y0 = Math.max(0, Math.min(frame.height, fromY))
+  const y1 = Math.max(0, Math.min(frame.height, toY))
+  const pixels = (y1 - y0) * (x1 - x0)
+  if (pixels <= 0) return 0
+
+  let vivid = 0
+  for (let y = y0; y < y1; y++) {
+    const row = y * frame.width
+    for (let x = x0; x < x1; x++) {
+      const i = (row + x) * 4
+      if (isVivid(frame.data[i], frame.data[i + 1], frame.data[i + 2])) vivid++
+    }
+  }
+  return vivid / pixels
+}
+
+// Второй признак: какая область отрывается от соседей НА ОДНОЙ С НИМИ ВЫСОТЕ.
+// Возвращает { name, margin, runnerUp, confident } либо null.
+function detectAreaByStandOut(frame, areas) {
+  if (!Array.isArray(areas) || areas.length < 2) return null
+
+  const rects = []
+  for (const area of areas) {
+    const rect = resolveCropRect(area, frame.width, frame.height)
+    if (rect) rects.push({ name: area.name, rect })
+  }
+  if (rects.length < 2) return null
+
+  const step = Math.max(1, Math.round(frame.height * BAND_RATIO))
+  const from = Math.round(frame.height * SKIP_TOP_RATIO)
+  // Лучший отрыв каждой области по всем высотам
+  const best = new Map()
+
+  for (let top = from; top + step <= frame.height; top += step) {
+    const shares = rects
+      .map((item) => ({
+        name: item.name,
+        value: shareIn(frame, item.rect.x, item.rect.x + item.rect.width, top, top + step)
+      }))
+      .sort((a, b) => b.value - a.value)
+
+    if (shares[0].value < MIN_BAND_SHARE) continue
+    const margin = shares[0].value / Math.max(shares[1].value, SHARE_FLOOR)
+    const known = best.get(shares[0].name)
+    if (known === undefined || margin > known) best.set(shares[0].name, margin)
+  }
+
+  const ranked = [...best.entries()].sort((a, b) => b[1] - a[1])
+  if (ranked.length === 0) return null
+  const runnerUp = ranked.length > 1 ? ranked[1][1] : 0
+  return {
+    name: ranked[0][0],
+    margin: ranked[0][1],
+    runnerUp,
+    confident: ranked.length < 2 || ranked[0][1] >= runnerUp * STANDOUT_GATE
+  }
 }
 
 // Разбор одного кадра: какая область "горит" и насколько уверенно.
@@ -106,6 +201,14 @@ function pickAreaByVotes(results) {
 // открыта, в конце уже закрыта, и полосы там может не быть.
 const SAMPLE_POINTS = [0.3, 0.5, 0.7]
 
+// Чаще брать кадры пробовали — стало хуже: 1 верный ответ из 4 вместо 2.
+// Маркер позиции горит не весь клип, а пока позиция открыта, и лишние кадры
+// попадают туда, где её уже нет. Их голоса перевешивают верные.
+//
+// Правильный ход не «чаще», а «в нужном окне»: время входа и выхода есть в
+// журнале терминала, размер запаса по краям — в настройках. Пока эти границы
+// сюда не переданы, частить бессмысленно.
+
 // Разбор целого клипа. Возвращает имя области либо null — "определить не
 // удалось", и это нормальный ответ, а не сбой.
 async function detectTradeArea(clipPath, areas, log = () => {}) {
@@ -118,31 +221,51 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   const duration = await probeDurationSeconds(clipPath)
 
   const results = []
+  const backup = []
   for (const at of SAMPLE_POINTS) {
     const timeSec = duration * at
     try {
       const frame = await grabFrameRgba(clipPath, timeSec, size)
       results.push(detectAreaInFrame(frame, areas))
+      backup.push(detectAreaByStandOut(frame, areas))
     } catch (error) {
       log(`Кадр на ${Math.round(timeSec)}с не разобрался: ${error.message}`)
       results.push(null)
+      backup.push(null)
     }
   }
 
-  const picked = pickAreaByVotes(results)
   const summary = results
     .map((r) => (r ? `${r.name} ${(r.score * 100).toFixed(1)}%${r.confident ? '' : ' (неуверенно)'}` : 'нет ответа'))
     .join(', ')
 
-  if (picked) log(`Область сделки определена как «${picked}». По кадрам: ${summary}`)
-  else log(`Определить область сделки не удалось. По кадрам: ${summary}`)
+  const picked = pickAreaByVotes(results)
+  if (picked) {
+    log(`Область сделки определена как «${picked}». По кадрам: ${summary}`)
+    return picked
+  }
 
-  return picked
+  // Первый признак промолчал — спрашиваем запасной. Порядок именно такой:
+  // равным голосом запасной ломает то, что первый определяет верно.
+  const fallback = pickAreaByVotes(backup)
+  const backupSummary = backup
+    .map((r) => (r ? `${r.name} отрыв ${r.margin.toFixed(1)}x${r.confident ? '' : ' (неуверенно)'}` : 'нет ответа'))
+    .join(', ')
+
+  if (fallback) {
+    log(`Область сделки определена по отрыву на своей высоте как «${fallback}».`
+      + ` Полоса внизу ничего не дала (${summary}), по отрыву: ${backupSummary}`)
+    return fallback
+  }
+
+  log(`Определить область сделки не удалось. По полосе внизу: ${summary}. По отрыву: ${backupSummary}`)
+  return null
 }
 
 module.exports = {
   detectTradeArea,
   detectAreaInFrame,
+  detectAreaByStandOut,
   pickAreaByVotes,
   scoreArea,
   MIN_SCORE,

@@ -384,6 +384,53 @@ function detectPanelGuides(frame) {
   }
 }
 
+// Поиск границ по НЕСКОЛЬКИМ кадрам. Один кадр — ненадёжный свидетель.
+//
+// Замерено на записи TigerTrade: на одном и том же клипе поиск давал 13 линий
+// на четверти длины, 12 на середине и 19 на семидесяти процентах. На кадр
+// попадает то всплывшая подсказка, то раскрытый список, то курсор поверх
+// границы — и набор линий меняется. Человек при этом видит один ответ и не
+// знает, что соседний кадр дал бы другой.
+//
+// Поэтому смотрим несколько кадров и берём тот ответ, который повторяется:
+// случайная помеха живёт на одном кадре, настоящая сетка — на всех.
+function detectPanelGuidesFromFrames(frames) {
+  const usable = (frames || []).filter((frame) => frame && frame.width > 0)
+  if (usable.length === 0) return { vertical: [], horizontal: [], variants: [] }
+  if (usable.length === 1) return detectPanelGuides(usable[0])
+
+  const width = usable[0].width
+  const perFrame = usable.map((frame) => detectPanelGuides(frame))
+
+  // Голос даёт только лучший ответ кадра. Остальные варианты тоже собираем —
+  // они нужны в окне, где границы переключают кнопкой, — но без голоса.
+  const groups = []
+  const remember = (lines, votes, horizontal) => {
+    if (!lines || lines.length < 3) return
+    const existing = groups.find((group) => isSameVariant(group.lines, lines))
+    if (existing) {
+      existing.votes += votes
+      return
+    }
+    groups.push({ lines, votes, horizontal, score: gridScore(lines, width) })
+  }
+
+  for (const guides of perFrame) remember(guides.vertical, 1, guides.horizontal)
+  for (const guides of perFrame) {
+    for (const lines of guides.variants) remember(lines, 0, guides.horizontal)
+  }
+
+  groups.sort((a, b) => b.votes - a.votes || b.score - a.score)
+  const best = groups[0]
+  if (!best) return { vertical: [], horizontal: [], variants: [] }
+
+  return {
+    vertical: best.lines,
+    horizontal: best.horizontal || [],
+    variants: groups.slice(0, MAX_VARIANTS).map((group) => group.lines)
+  }
+}
+
 // Ближайшая направляющая к позиции, если она в пределах допуска. Иначе
 // undefined — значит прилипать не к чему и берём то, что натянул пользователь.
 function snapToGuide(value, guides, tolerance) {
@@ -399,4 +446,4 @@ function snapToGuide(value, guides, tolerance) {
   return best
 }
 
-module.exports = { detectPanelGuides, snapToGuide, toGrayscale }
+module.exports = { detectPanelGuides, detectPanelGuidesFromFrames, snapToGuide, toGrayscale }
