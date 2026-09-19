@@ -128,7 +128,15 @@ function createTray({
     return image
   }
 
-  let tray = new Tray(getIcon('warn'))
+  // Левый щелчок открывает программу. Обработчик вешается отдельной функцией,
+  // потому что значок ещё и пересоздаётся (страховка от пустого места в
+  // области уведомлений) — на новом объекте подписки прежнего не остаётся.
+  function attachClick(target) {
+    target.on('click', () => onOpenMainWindow())
+    return target
+  }
+
+  let tray = attachClick(new Tray(getIcon('warn')))
 
   let statusText = STATUS_LABELS.warn
   let currentRealIcon = 'warn'
@@ -173,7 +181,7 @@ function createTray({
       iconCache.clear()
       // Сначала новый значок, потом убираем старый — чтобы трей не оставался
       // пустым в промежутке.
-      tray = new Tray(getIcon(currentRealIcon))
+      tray = attachClick(new Tray(getIcon(currentRealIcon)))
       previous.destroy()
       refreshMenu()
       log('Значок в трее пересоздан (страховка от пустого места в области уведомлений)')

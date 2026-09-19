@@ -1320,6 +1320,46 @@ function testDetectPanelGuides() {
 }
 
 // Кадр без единой линии не должен давать выдуманных границ.
+// Бледные разделители — светлая тема терминала.
+//
+// Так выглядела настоящая поломка у стороннего пользователя: на его светлой
+// теме перепад между панелью и разделителем всего несколько единиц яркости,
+// строгий порог его не замечал, и границы не находились вообще. Причём просто
+// опустить порог нельзя — на тёмной теме тогда в находки лезет разметка внутри
+// стакана. Поэтому попытки идут лесенкой, и проверяем мы именно это: что
+// мягкая попытка подхватывает то, на чём строгая молчит.
+function testDetectPanelGuidesOnPaleTheme() {
+  const width = 1200
+  const height = 400
+  const BACKGROUND = 210
+  const SEPARATOR = 203 // всего на 7 темнее фона: строгий порог 12 это пропускает
+  const columns = [0, 300, 600, 900, 1199]
+
+  const data = new Uint8Array(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const value = columns.includes(x) ? SEPARATOR : BACKGROUND
+      const i = (y * width + x) * 4
+      data[i] = value
+      data[i + 1] = value
+      data[i + 2] = value
+      data[i + 3] = 255
+    }
+  }
+
+  const guides = detectPanelGuides({ width, height, data })
+  assert.ok(guides.vertical.length >= 4,
+    `бледные разделители должны находиться, а найдено линий: ${guides.vertical.length}`)
+
+  // Линии обязаны лечь на сами разделители, а не куда-то рядом
+  for (const expected of [300, 600, 900]) {
+    const hit = guides.vertical.some((line) => Math.abs(line - expected) <= 3)
+    assert.ok(hit, `разделитель на ${expected} не найден: ${guides.vertical.join(', ')}`)
+  }
+
+  console.log('[OK] testDetectPanelGuidesOnPaleTheme')
+}
+
 function testDetectPanelGuidesOnBlankFrame() {
   const width = 400
   const height = 300
@@ -1564,6 +1604,7 @@ async function main() {
   testResolveCropRect()
   await testCropClipByRect()
   testDetectPanelGuides()
+  testDetectPanelGuidesOnPaleTheme()
   testDetectPanelGuidesOnBlankFrame()
   testSanitizeOutputFileName()
   await testCropClipUsesGivenNameAndKeepsPrevious()
