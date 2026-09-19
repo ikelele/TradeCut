@@ -928,8 +928,22 @@ select:focus { outline: 1px solid var(--accent); }
 /* Пустая строка состояния не должна занимать место — оно нужно кадру */
 .editor-window .status:empty { display: none; }
 
-/* Повтор по кругу — кнопка с состоянием, а не разовое действие */
-.play-button[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
+/* Скорость ползунком: одна ручка вместо ряда кнопок, и промежуточные
+   значения выбираются так же легко, как круглые. */
+.speed-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.speed-row input[type="range"] {
+  width: 150px;
+  accent-color: var(--accent);
+}
+
+.speed-value {
+  min-width: 62px; /* «Обычная» и «x2.5» не должны дёргать соседей */
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }

@@ -46,7 +46,6 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   const rangeEl = document.getElementById('range')
   const playheadEl = document.getElementById('playhead')
   const playButton = document.getElementById('play')
-  const loopButton = document.getElementById('loop')
   const soundButton = document.getElementById('sound')
   const timeEl = document.getElementById('time')
   const trimLabelEl = document.getElementById('trim-label')
@@ -64,7 +63,6 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   let keepTo = 0
   // Менялся ли диапазон с прошлого воспроизведения — см. togglePlay
   let rangeChanged = false
-  let looping = false
 
   function setStatus(text, kind) {
     statusEl.className = kind ? `status ${kind}` : 'status'
@@ -364,11 +362,6 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
 
   playButton.addEventListener('click', togglePlay)
 
-  loopButton.addEventListener('click', () => {
-    looping = !looping
-    loopButton.setAttribute('aria-pressed', String(looping))
-  })
-
   soundButton.addEventListener('click', () => {
     video.muted = !video.muted
     soundButton.textContent = video.muted ? '🔇' : '🔊'
@@ -378,21 +371,10 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   video.addEventListener('pause', () => { playButton.textContent = '▶' })
   video.addEventListener('timeupdate', () => {
     if (!video.paused && video.currentTime >= keepTo) {
-      if (looping) video.currentTime = keepFrom
-      else { video.pause(); video.currentTime = keepTo }
+      video.pause()
+      video.currentTime = keepTo
     }
     drawTimeline()
-  })
-
-  // Отдельно — конец файла. Когда выделен клип целиком, до проверки в
-  // timeupdate дело не доходит: видео кончается само и встаёт на паузу, и
-  // повтор по кругу молча не работал бы ровно в том случае, когда он нужен
-  // чаще всего — «прокрути мне это ещё раз».
-  video.addEventListener('ended', () => {
-    if (!looping) return
-    video.currentTime = keepFrom
-    const again = video.play()
-    if (again && typeof again.catch === 'function') again.catch(() => {})
   })
 
   // ── Кнопки под дорожкой ─────────────────────────────────────────────────

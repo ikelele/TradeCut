@@ -11,8 +11,14 @@
 // На сколько равных частей делить кадр, пока пользователь не настроил свои
 // области. Приходит из настроек: мониторы у всех разные, зашивать нельзя.
 const DEFAULT_STAKAN_COUNT = 0
-// Запасной список на случай, если настройки ещё не прочитаны
-const DEFAULT_SPEED_PRESETS = [1, 2, 3, 5, 10]
+// Остановки ползунка скорости. Неравномерные намеренно: между «обычной» и
+// тройной разница заметна на глаз и выбирается точно, а выше десятой доли
+// секунды всё равно не разглядеть — там шаг крупнее.
+//
+// Список здесь, а не в настройках: в настройках задаются скорости для меню
+// трея, где их перечисляют строкой и где каждая — отдельный пункт. Ползунку
+// нужны частые остановки, иначе он не ползунок.
+const SPEED_STOPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
 // Стакан выбирать необязательно: бывает нужно просто ускорить клип или
 // отрезать секунды с краёв, оставив кадр целиком. null = не резать по ширине,
 // это же значение понимает cropClipToStakan.
@@ -47,8 +53,11 @@ function createCropForm(root, { onAreaChosen = () => {} } = {}) {
       <div class="options" data-role="stakan"></div>
     </div>
     <div class="field">
-      <label class="field-label">Скорость</label>
-      <div class="options" data-role="speed"></div>
+      <label class="field-label" for="speed">Скорость</label>
+      <div class="speed-row">
+        <input type="range" id="speed" min="0" max="${SPEED_STOPS.length - 1}" step="1" value="0">
+        <span class="speed-value" data-role="speed-value"></span>
+      </div>
     </div>
     <div class="field">
       <label class="checkbox">
@@ -64,7 +73,6 @@ function createCropForm(root, { onAreaChosen = () => {} } = {}) {
 
   let stakanIndex = NO_STAKAN
   let stakanCount = DEFAULT_STAKAN_COUNT
-  let speedPresets = DEFAULT_SPEED_PRESETS
   let speedFactor = 1
   // Рамка, нарисованная мышью в редакторе. Пока она есть — режем по ней, а не
   // по стакану или пресету: это самое свежее и самое осознанное решение.
@@ -73,6 +81,8 @@ function createCropForm(root, { onAreaChosen = () => {} } = {}) {
   let selectedPreset = null
 
   const stakanContainer = root.querySelector('[data-role="stakan"]')
+  const speedInput = root.querySelector('#speed')
+  const speedValueEl = root.querySelector('[data-role="speed-value"]')
   const muteInput = root.querySelector('#mute')
   const outputNameInput = root.querySelector('#output-name')
 
@@ -134,32 +144,17 @@ function createCropForm(root, { onAreaChosen = () => {} } = {}) {
       // значение («не делить кадр»), и || молча заменил бы его умолчанием.
       const configured = Number(config && config.clip && config.clip.stakanCount)
       stakanCount = Number.isFinite(configured) ? Math.max(0, configured) : DEFAULT_STAKAN_COUNT
-
-      const speeds = config && config.clip && config.clip.speedPresets
-      if (Array.isArray(speeds) && speeds.length > 0) {
-        speedPresets = speeds
-        buildSpeedOptions()
-      }
       return window.api.getCropPresets ? window.api.getCropPresets() : []
     }).then((presets) => buildAreaOptions(presets || []))
   }
 
-  function buildSpeedOptions() {
-    const container = root.querySelector('[data-role="speed"]')
-    container.innerHTML = ''
-    // Единица должна быть в списке всегда: без неё нельзя выбрать «как есть»,
-    // а в настройках её легко случайно убрать.
-    const values = speedPresets.includes(1) ? speedPresets : [1, ...speedPresets]
-    buildOptionGroup(
-      container,
-      values,
-      (value) => (value === 1 ? 'Обычная' : `x${value}`),
-      1,
-      (value) => { speedFactor = value }
-    )
+  function showSpeed() {
+    speedFactor = SPEED_STOPS[Number(speedInput.value)] || 1
+    speedValueEl.textContent = speedFactor === 1 ? 'Обычная' : `x${speedFactor}`
   }
 
-  buildSpeedOptions()
+  speedInput.addEventListener('input', showSpeed)
+  showSpeed()
 
   return {
     // Окно сообщает панели, что взяли другой файл: прежняя рамка снималась с

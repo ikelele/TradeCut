@@ -487,10 +487,31 @@ app.whenReady().then(async () => {
        return statusEl.textContent
      })()`, (v) => typeof v === 'string' && v.includes('Нечего делать'))
 
-  await check(crop, 'crop.html', 'кнопки скорости строятся из настроек и всегда содержат «Обычная»',
-    '[...document.querySelectorAll("[data-role=speed] .option")].map(b => b.textContent)',
-    (v) => Array.isArray(v) && v[0] === 'Обычная'
-      && v.length === new Set([1, ...config.clip.speedPresets]).size)
+  // Скорость — ползунком, а не рядом кнопок: одна ручка вместо пяти кнопок,
+  // и промежуточные значения выбираются так же легко, как круглые.
+  await check(crop, 'crop.html', 'скорость задаётся ползунком и доходит до параметров обрезки', `
+    (() => {
+      const slider = document.getElementById('speed')
+      const label = () => document.querySelector('[data-role="speed-value"]').textContent
+      const move = (value) => {
+        slider.value = String(value)
+        slider.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      const start = { value: slider.value, label: label(), speed: form.getOptions().speedFactor }
+
+      move(slider.max)
+      const fastest = { label: label(), speed: form.getOptions().speedFactor }
+
+      move(2)
+      const chosen = { label: label(), speed: form.getOptions().speedFactor }
+
+      move(0) // возвращаем как было, чтобы не мешать следующим проверкам
+      return { start, fastest, chosen, stops: Number(slider.max) + 1, buttons: document.querySelectorAll('[data-role=speed] .option').length }
+    })()
+  `, (v) => v && v.start.value === '0' && v.start.label === 'Обычная' && v.start.speed === 1
+       && v.fastest.speed === 10 && v.chosen.label === 'x2' && v.chosen.speed === 2
+       // Ползунок без частых остановок — уже не ползунок
+       && v.stops >= 8 && v.buttons === 0)
 
   await check(crop, 'crop.html', 'галка "Без звука" есть и по умолчанию снята',
     '!!document.getElementById("mute") && document.getElementById("mute").checked === false', (v) => v === true)
@@ -700,27 +721,6 @@ app.whenReady().then(async () => {
       return { at: video.currentTime, expected: video.duration * 0.5, trim: editor.getTrim(), before }
     })()
   `, (v) => v && Math.abs(v.at - v.expected) < 0.4 && v.trim.trimStart === v.before.trimStart)
-
-  await check(crop, 'crop.html', 'повтор по кругу не останавливает клип в конце выделения', `
-    (async () => {
-      const video = document.getElementById('video')
-      const loop = document.getElementById('loop')
-      document.getElementById('trim-reset').click()
-      await new Promise((r) => setTimeout(r, 150))
-
-      loop.click()
-      const pressed = loop.getAttribute('aria-pressed')
-      video.currentTime = Math.max(0, video.duration - 0.4)
-      const started = video.play()
-      if (started && started.catch) started.catch(() => {})
-      await new Promise((r) => setTimeout(r, 900))
-      const stillPlaying = !video.paused
-      const at = video.currentTime
-      video.pause()
-      loop.click()
-      return { pressed, stillPlaying, at, duration: video.duration }
-    })()
-  `, (v) => v && v.pressed === 'true' && v.stillPlaying === true && v.at < v.duration - 0.2)
 
   await check(crop, 'crop.html', 'пробел запускает и останавливает воспроизведение', `
     (async () => {
