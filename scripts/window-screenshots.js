@@ -28,6 +28,8 @@ const TRADES = [
   { label: '龙虾USDT LONG 09-18 11:11 63s', clipPath: 'C:\\Trades\\2026-09-18\\龙虾USDT LONG Binance 2026-09-18 11-11-52.mp4' }
 ]
 
+let shotIndex = 1
+
 async function shoot(page, { width, height }, prepare) {
   const win = new BrowserWindow({
     width,
@@ -52,7 +54,7 @@ async function shoot(page, { width, height }, prepare) {
   }
 
   const image = await win.webContents.capturePage()
-  const file = path.join(OUT_DIR, page.replace('.html', '') + (prepare ? '-2' : '') + '.png')
+  const file = path.join(OUT_DIR, page.replace('.html', '') + (prepare ? '-' + (++shotIndex) : '') + '.png')
   fs.writeFileSync(file, image.toPNG())
   console.log(`${page}${prepare ? ' (после действий)' : ''} -> ${path.basename(file)}${errors.length ? '  ОШИБКИ: ' + errors.join(' | ') : ''}`)
   win.hide() // не destroy: он ломает загрузку следующего окна
@@ -124,6 +126,22 @@ app.whenReady().then(async () => {
   `)
   await shoot('help.html', { width: 680, height: 720 })
   await shoot('crop.html', { width: 620, height: 700 })
+
+  // Сетка областей: делим кадр на шесть частей
+  await shoot('crop.html', { width: 1100, height: 900 }, `
+    new Promise((resolve) => {
+      document.getElementById('pick').click()
+      setTimeout(() => {
+        document.querySelector('[data-role="pick-visually"]').click()
+        setTimeout(() => {
+          const input = document.querySelector('[data-role="grid-count"]')
+          input.value = '6'
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          setTimeout(resolve, 300)
+        }, 900)
+      }, 300)
+    })
+  `)
 
   // Окно обрезки с открытым превью — основной рабочий вид
   await shoot('crop.html', { width: 1100, height: 900 }, `

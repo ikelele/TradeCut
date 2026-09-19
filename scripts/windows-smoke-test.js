@@ -616,6 +616,52 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v && v.before !== v.after && /^\d+x\d+ из 320x240$/.test(v.size || ''))
 
+  // Сетка областей: человек говорит, на сколько частей делить, и сразу видит
+  // их на кадре с номерами. Это единственный путь для тех, у кого поиск границ
+  // не сработал, поэтому проверяем его целиком — от ввода числа до сохранения.
+  // Идёт последней: сетка меняет и разбивку, и список сохранённых областей.
+  await check(crop, 'crop.html', 'число частей сразу рисует пронумерованные области', `
+    (async () => {
+      const input = document.querySelector('[data-role="grid-count"]')
+      input.value = '6'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      return {
+        cells: document.querySelectorAll('.grid-cell').length,
+        numbers: [...document.querySelectorAll('.grid-number')].map((el) => el.textContent).join(''),
+        dividers: document.querySelectorAll('.grid-edge-vertical').length,
+        edges: document.querySelectorAll('.grid-edge-horizontal').length,
+        boxHidden: document.querySelector('[data-role="box"]').hidden
+      }
+    })()
+  `, (v) => v && v.cells === 6 && v.numbers === '123456' && v.dividers === 5
+       && v.edges === 2 && v.boxHidden === true)
+
+  // Границы двигаются мышью — это главное действие в этом режиме.
+  await check(crop, 'crop.html', 'границу можно подвинуть мышью', `
+    (() => {
+      const cellWidth = () => document.querySelector('.grid-cell').getBoundingClientRect().width
+      const before = cellWidth()
+      const divider = document.querySelectorAll('.grid-edge-vertical')[0]
+      const bounds = document.querySelector('[data-role="stage"]').getBoundingClientRect()
+      divider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + 50, clientY: bounds.top + 50 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + 20, clientY: bounds.top + 50 }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+      return { before, after: cellWidth() }
+    })()
+  `, (v) => v && v.after < v.before)
+
+  // Одна кнопка создаёт все шесть областей разом: по отдельности сохранять
+  // каждую — ровно тот ритуал, ради избавления от которого это и сделано.
+  await check(crop, 'crop.html', 'одна кнопка сохраняет все области сетки', `
+    (async () => {
+      document.querySelector('[data-role="save-all"]').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      return document.querySelector('[data-role="status"]').textContent
+    })()
+  `, (v) => typeof v === 'string' && /Сохранено областей: 6/.test(v))
+
+
   // Помощник первой настройки. Главное, что здесь может молча сломаться:
   // шаги перестают переключаться, проверки показывают не тот исход, а данные
   // с предыдущего шага теряются при переходе на следующий.

@@ -46,6 +46,7 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
       <!-- Направляющие рисуются ПОСЛЕ рамки: иначе затемнение вокруг неё
            (большая тень) перекрыло бы линии за пределами выделения. -->
       <div class="guides" data-role="guides"></div>
+      <div class="grid-layer" data-role="grid" hidden></div>
     </div>
     <div class="preview-bar">
       <button type="button" class="secondary play-button" data-role="play">▶</button>
@@ -60,6 +61,9 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
     </div>
     <p class="field-hint" data-role="trim-label"></p>
     <div class="preview-actions">
+      <label class="grid-count">Разбить на
+        <input type="number" data-role="grid-count" min="0" max="24" step="1" placeholder="6">
+        частей</label>
       <button type="button" class="secondary" data-role="detect">Найти границы</button>
       <button type="button" class="secondary" data-role="variant" hidden>Другой вариант</button>
       <button type="button" class="secondary" data-role="reset">Вся картинка</button>
@@ -86,6 +90,8 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   const sizeEl = root.querySelector('[data-role="size"]')
   const statusEl = root.querySelector('[data-role="status"]')
   const nameInput = root.querySelector('[data-role="preset-name"]')
+  const gridLayer = root.querySelector('[data-role="grid"]')
+  const gridCountInput = root.querySelector('[data-role="grid-count"]')
 
   // Рамка в CSS-пикселях относительно левого верхнего угла видео
   let boxRect = null
@@ -103,6 +109,10 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   let guides = { vertical: [], horizontal: [], variants: [] }
   let variantIndex = 0
   let currentClipPath = null
+  // Сетка областей: границы в пикселях ИСХОДНОГО кадра. Не в экранных, как
+  // рамка, — иначе изменение размера окна сдвигало бы уже расставленные
+  // границы, а это главное, что человек здесь делает руками.
+  let grid = null // { dividers: number[], top: number, bottom: number }
 
   function displaySize() {
     return { width: video.clientWidth, height: video.clientHeight }
@@ -183,6 +193,14 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
     const naturalSide = axis === 'x' ? naturalSize.width : naturalSize.height
     if (!shownSide) return 0
     return Math.round(value * (naturalSide / shownSide))
+  }
+
+  function videoToPage(value, axis) {
+    const shown = displaySize()
+    const shownSide = axis === 'x' ? shown.width : shown.height
+    const naturalSide = axis === 'x' ? naturalSize.width : naturalSize.height
+    if (!naturalSide) return 0
+    return value * (shownSide / naturalSide)
   }
 
   function applyBoxToDom() {
@@ -437,7 +455,150 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   // линиями, а высота — у рамки, которую пользователь уже выставил. Так
   // настройка делается один раз: обвёл по высоте, нажал — и все стаканы
   // сохранены с настоящими границами.
+  // ── Сетка областей ──────────────────────────────────────────────────────
+  //
+  // Ручная настройка раньше шла по одной области за раз: обведи мышью,
+  // придумай имя, сохрани, повтори шесть раз. На шести стаканах этим никто не
+  // станет заниматься, а это единственный путь для тех, у кого автоматический
+  // поиск границ не сработал.
+  //
+  // Здесь человек говорит, на сколько частей делить, и сразу видит их на
+  // кадре с номерами — как выбор мониторов в Windows. Дальше двигает границы,
+  // если разбивка не совпала, и сохраняет все разом.
+
+  const MIN_CELL_RATIO = 0.02 // уже этого ячейку не ухватить мышью
+
+  function buildEvenGrid(count) {
+    if (!naturalSize || count < 2) return null
+    const dividers = []
+    for (let k = 1; k < count; k++) dividers.push(Math.round((naturalSize.width * k) / count))
+    // Если рамка уже стояла, наследуем её вертикальные границы: человек мог
+    // отрезать заголовок окна и не должен делать это второй раз.
+    const top = boxRect ? pageToVideo(boxRect.y, 'y') : 0
+    const bottom = boxRect ? top + pageToVideo(boxRect.height, 'y') : naturalSize.height
+    return { dividers, top, bottom }
+  }
+
+  function gridEdges() {
+    return [0, ...grid.dividers, naturalSize.width]
+  }
+
+  // Перетаскивание одной границы: вертикальной между ячейками либо
+  // горизонтальной сверху/снизу.
+  function dragGridLine(event, kind, index) {
+    event.preventDefault()
+    const bounds = stage.getBoundingClientRect()
+
+    const move = (moveEvent) => {
+      if (kind === 'divider') {
+        const value = pageToVideo(moveEvent.clientX - bounds.left, 'x')
+        const edges = gridEdges()
+        const gap = naturalSize.width * MIN_CELL_RATIO
+        const low = edges[index] + gap
+        const high = edges[index + 2] - gap
+        grid.dividers[index] = Math.round(Math.max(low, Math.min(value, high)))
+      } else {
+        const value = pageToVideo(moveEvent.clientY - bounds.top, 'y')
+        const gap = naturalSize.height * MIN_CELL_RATIO
+        if (kind === 'top') grid.top = Math.round(Math.max(0, Math.min(value, grid.bottom - gap)))
+        else grid.bottom = Math.round(Math.min(naturalSize.height, Math.max(value, grid.top + gap)))
+      }
+      renderGrid()
+    }
+
+    const stop = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop)
+  }
+
+  function addGridLine(kind, index, position, horizontal) {
+    const line = document.createElement('div')
+    line.className = horizontal ? 'grid-edge grid-edge-horizontal' : 'grid-edge grid-edge-vertical'
+    if (horizontal) line.style.top = `${position}px`
+    else line.style.left = `${position}px`
+    line.addEventListener('pointerdown', (event) => dragGridLine(event, kind, index))
+    gridLayer.appendChild(line)
+  }
+
+  function renderGrid() {
+    gridLayer.innerHTML = ''
+    gridLayer.hidden = !grid
+    if (!grid || !naturalSize) return
+
+    const top = videoToPage(grid.top, 'y')
+    const height = videoToPage(grid.bottom - grid.top, 'y')
+    const edges = gridEdges()
+
+    // Сами ячейки с номерами. Номер крупный и по центру — по нему человек
+    // сверяется с тем, что потом выберет в меню трея.
+    for (let index = 1; index < edges.length; index++) {
+      const left = videoToPage(edges[index - 1], 'x')
+      const width = videoToPage(edges[index] - edges[index - 1], 'x')
+
+      const cell = document.createElement('div')
+      cell.className = 'grid-cell'
+      cell.style.left = `${left}px`
+      cell.style.top = `${top}px`
+      cell.style.width = `${width}px`
+      cell.style.height = `${height}px`
+
+      const label = document.createElement('span')
+      label.className = 'grid-number'
+      label.textContent = String(index)
+      cell.appendChild(label)
+      gridLayer.appendChild(cell)
+    }
+
+    for (let index = 0; index < grid.dividers.length; index++) {
+      addGridLine('divider', index, videoToPage(grid.dividers[index], 'x'), false)
+    }
+    addGridLine('top', 0, top, true)
+    addGridLine('bottom', 0, top + height, true)
+
+    sizeEl.textContent = `${edges.length - 1} областей из ${naturalSize.width}x${naturalSize.height}`
+  }
+
+  function setGridCount(count) {
+    grid = buildEvenGrid(count)
+    // Рамка и сетка — два разных ответа на один вопрос, показывать оба разом
+    // незачем: человек перестаёт понимать, что именно вырежется.
+    if (grid) {
+      boxRect = null
+      applyBoxToDom()
+      guidesEl.innerHTML = ''
+    }
+    saveAllButton.hidden = !grid && guides.vertical.length === 0
+    renderGrid()
+    if (!grid) refresh()
+  }
+
+  gridCountInput.addEventListener('input', () => {
+    const count = Number(gridCountInput.value)
+    setGridCount(Number.isFinite(count) ? count : 0)
+  })
+
   function allRegionsFromGuides() {
+    // Сетка, если она задана, — ответ человека, а найденные границы лишь
+    // подсказка. Поэтому она главнее.
+    if (grid && naturalSize) {
+      const edges = gridEdges()
+      const regions = []
+      for (let index = 1; index < edges.length; index++) {
+        regions.push({
+          x: edges[index - 1],
+          y: grid.top,
+          width: edges[index] - edges[index - 1],
+          height: grid.bottom - grid.top,
+          sourceWidth: naturalSize.width,
+          sourceHeight: naturalSize.height
+        })
+      }
+      return regions
+    }
+
     if (!naturalSize || !boxRect) return []
     const edges = [...new Set([0, ...guides.vertical, naturalSize.width])].sort((a, b) => a - b)
     const top = pageToVideo(boxRect.y, 'y')
@@ -455,6 +616,21 @@ function createCropPreview(root, { onChange = () => {}, onTrimChange = () => {} 
   function applyVariant() {
     const variant = guides.variants[variantIndex]
     if (variant) guides = { ...guides, vertical: variant }
+
+    // Если человек уже задал число частей, поиск границ не рисует отдельные
+    // линии, а расставляет границы его сетки: так он сразу видит результат
+    // теми же номерованными областями и может поправить любую мышью.
+    if (grid && variant && variant.length >= 2) {
+      const inner = variant.filter((x) => x > 0 && x < naturalSize.width)
+      grid = { ...grid, dividers: inner }
+      gridCountInput.value = String(inner.length + 1)
+      renderGrid()
+      variantButton.hidden = guides.variants.length < 2
+      variantButton.textContent = guides.variants.length > 1
+        ? `Другой вариант (${variantIndex + 1}/${guides.variants.length})`
+        : 'Другой вариант'
+      return
+    }
     saveAllButton.hidden = guides.vertical.length === 0
     variantButton.hidden = guides.variants.length < 2
     variantButton.textContent = guides.variants.length > 1
