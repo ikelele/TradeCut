@@ -176,7 +176,7 @@ function renderPresets(presets) {
 }
 
 // Кнопка «?» живёт в полосе вкладок главного окна, её вешает main.js
-document.getElementById('open-areas').addEventListener('click', () => window.api.openCropWindow())
+document.getElementById('open-areas').addEventListener('click', () => window.api.openAreas())
 
 function fillForm(config) {
   renderPresets(config.clip && config.clip.cropPresets)

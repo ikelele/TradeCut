@@ -39,7 +39,7 @@ function createCropForm(root) {
     <div class="field">
       <label class="field-label">Что вырезать из кадра — необязательно</label>
       <div class="options" data-role="stakan"></div>
-      <button type="button" class="secondary" data-role="pick-visually">Выделить мышью...</button>
+      <button type="button" class="secondary" data-role="pick-visually">Показать кадр</button>
       <p class="field-hint" data-role="trim-summary" hidden></p>
       <div class="crop-preview" data-role="preview" hidden></div>
     </div>
@@ -189,7 +189,7 @@ function createCropForm(root) {
   // видно, что именно вырежется, а не гадать по названию.
   // Само превью при этом НЕ открывается: разворачивать окно во весь экран из-за
   // нажатия на "Стакан 2" — слишком резко, если человек просто выбирает, что
-  // резать. Превью открывается только кнопкой "Выделить мышью...".
+  // резать. Кадр открывается только кнопкой "Показать кадр".
   function showChosenArea() {
     if (!clipPath || !preview.isOpen()) return
     preview.showArea(chosenAreaRect)
@@ -197,7 +197,7 @@ function createCropForm(root) {
 
   function closePreview() {
     preview.close()
-    pickButton.textContent = 'Выделить мышью...'
+    pickButton.textContent = 'Показать кадр'
     if (window.api.setPreviewMode) window.api.setPreviewMode(false)
     // После нарезки страница прокручена вниз, к пути готового файла. Если её
     // не вернуть, окно обрезки открывается где-то на середине формы — вместо
@@ -220,7 +220,7 @@ function createCropForm(root) {
     preview.showAreaWhenReady(chosenAreaRect)
     if (window.api.setPreviewMode) window.api.setPreviewMode(true)
     preview.open(clipPath, currentTrim())
-    pickButton.textContent = 'Убрать превью'
+    pickButton.textContent = 'Скрыть кадр'
   })
 
   // Крестик окна при открытом превью и клавиша Esc возвращают к обычному виду
@@ -239,40 +239,6 @@ function createCropForm(root) {
   // Разовая настройка под свой монитор: обвёл рамкой нужную высоту, нажал
   // "Найти границы", нажал это — и все стаканы сохранены с настоящими
   // границами. Дальше они доступны и здесь, и в меню трея по сделке.
-  preview.onSaveAllClick(async () => {
-    const regions = preview.getAllRegions()
-    if (regions.length === 0) return preview.setStatus('Сначала нажми «Найти границы».')
-
-    const prefix = preview.getPresetName().trim() || 'Стакан'
-    const presets = regions.map((region, index) => ({ ...region, name: `${prefix} ${index + 1}` }))
-
-    try {
-      const saved = await window.api.saveCropPreset(presets)
-      buildAreaOptions(saved)
-      preview.clearPresetName()
-      preview.setStatus(`Сохранено областей: ${presets.length} — «${presets[0].name}»...«${presets.at(-1).name}». Они появились в меню трея.`)
-    } catch (error) {
-      preview.setStatus(`Не удалось сохранить: ${error.message || error}`)
-    }
-  })
-
-  preview.onSaveClick(async () => {
-    const rect = preview.getRect()
-    const name = preview.getPresetName().trim()
-    if (!rect) return preview.setStatus('Сначала выдели рамку.')
-    if (!name) return preview.setStatus('Впиши имя пресета — под ним он появится в меню трея.')
-
-    try {
-      const presets = await window.api.saveCropPreset([{ ...rect, name }])
-      buildAreaOptions(presets)
-      preview.clearPresetName()
-      preview.setStatus(`Пресет «${name}» сохранён — теперь он есть в меню трея.`)
-      visualRect = rect
-      visualName = name
-    } catch (error) {
-      preview.setStatus(`Не удалось сохранить: ${error.message || error}`)
-    }
-  })
 
   function buildSpeedOptions() {
     const container = root.querySelector('[data-role="speed"]')
@@ -317,7 +283,7 @@ function createCropForm(root) {
     // Вызывается после успешной нарезки. Превью намеренно НЕ закрываем и окно
     // не ужимаем: раньше оно схлопывалось ровно в тот момент, когда глаз ищет
     // путь к готовому файлу, и это выглядело рывком. Размер вернётся, когда
-    // пользователь сам нажмёт "Убрать превью" или возьмёт другой файл.
+    // пользователь сам нажмёт "Скрыть кадр" или возьмёт другой файл.
     // Побочная польза: из того же клипа сразу можно вырезать вторую область,
     // не открывая превью заново и не перематывая.
     afterRun() {}

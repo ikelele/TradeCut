@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- media-src нужен для кадра из записи: без него default-src 'none'
+       запрещает загрузку видео в окно. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; media-src 'self' file:">
+  <link rel="stylesheet" href="app.css">
+  <title>Разметка областей</title>
+</head>
+<body class="areas-window">
+  <div class="areas-toolbar">
+    <label class="grid-count">Стаканов на экране
+      <input type="number" id="count" min="0" max="24" step="1" placeholder="6">
+    </label>
+    <button type="button" class="secondary" id="detect">Найти границы</button>
+    <button type="button" class="secondary" id="variant" hidden>Другой вариант</button>
+    <button type="button" class="secondary" id="pick">Другой файл...</button>
+    <span class="areas-spacer"></span>
+    <button type="button" class="primary" id="save" disabled>Сохранить области</button>
+  </div>
+
+  <div class="areas-frame" id="frame">
+    <div class="areas-stage" id="stage">
+      <video id="video" preload="metadata" muted></video>
+      <div class="grid-layer" id="grid"></div>
+    </div>
+    <p class="areas-empty" id="empty">Выбери клип, чтобы разметить на нём области</p>
+  </div>
+
+  <p class="areas-hint" id="hint">Впиши, сколько у тебя стаканов на экране — они сразу появятся на кадре. Границы двигаются мышью, верхняя и нижняя тоже: ими отрезается заголовок окна терминала.</p>
+  <div class="status" id="status"></div>
+
+  <script src="areas.js"></script>
+</body>
+</html>

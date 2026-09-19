@@ -152,6 +152,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('replay:save', () => ({ clipPath: 'C:\replays\проверка.mp4' }))
   ipcMain.on('folder:open', () => {})
   ipcMain.on('window:open-main', () => {})
+  // Окно разметки областей получает клип при открытии
+  ipcMain.handle('areas:clip', () => path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv'))
+  ipcMain.on('areas:open', () => {})
   // Проверка обновлений отвечает по очереди всем, чем может: сначала "всё
   // свежее", потом пустой список выпусков, потом настоящая ошибка сети.
   const UPDATE_ANSWERS = [
@@ -203,7 +206,6 @@ app.whenReady().then(async () => {
     'document.getElementById("run").disabled', (v) => v === true)
   await check(mainWin, 'main.html', 'выбор сделки разблокирует кнопку',
     'document.querySelector(".trade-item").click(); document.getElementById("run").disabled', (v) => v === false)
-
 
   const settings = mainWin
   await check(settings, 'main.html (настройки)', 'preload отдал window.api', 'typeof window.api', (v) => v === 'object')
@@ -352,6 +354,76 @@ app.whenReady().then(async () => {
        // А вот сеть не отвечает — это уже ошибка
        && /error/.test(v[2].cls) && /ENOTFOUND/.test(v[2].text))
 
+  // Разметка областей — отдельное окно, и у него одна задача: кадр занимает
+  // всё место, а человек говорит, на сколько частей делить. Раньше это жило
+  // вперемешку с обрезкой клипа, и кадру доставались остатки.
+  const areas = await openPage('areas.html')
+
+  await check(areas, 'areas.html', 'кадр занимает всё свободное место окна', `
+    (() => {
+      const frame = document.getElementById('frame').getBoundingClientRect()
+      const stage = document.getElementById('stage').getBoundingClientRect()
+      return {
+        frameWidth: Math.round(frame.width),
+        stageWidth: Math.round(stage.width),
+        fills: stage.width >= frame.width - 2 || stage.height >= frame.height - 2
+      }
+    })()
+  `, (v) => v && v.fills === true && v.stageWidth > 300)
+
+  await check(areas, 'areas.html', 'число стаканов сразу рисует пронумерованные области', `
+    (async () => {
+      const input = document.getElementById('count')
+      input.value = '6'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      return {
+        cells: document.querySelectorAll('.grid-cell').length,
+        numbers: [...document.querySelectorAll('.grid-number')].map((el) => el.textContent).join(''),
+        dividers: document.querySelectorAll('.grid-edge-vertical').length,
+        edges: document.querySelectorAll('.grid-edge-horizontal').length,
+        saveEnabled: !document.getElementById('save').disabled
+      }
+    })()
+  `, (v) => v && v.cells === 6 && v.numbers === '123456' && v.dividers === 5
+       && v.edges === 2 && v.saveEnabled === true)
+
+  await check(areas, 'areas.html', 'границу можно подвинуть мышью', `
+    (() => {
+      const width = () => document.querySelector('.grid-cell').getBoundingClientRect().width
+      const before = width()
+      const divider = document.querySelectorAll('.grid-edge-vertical')[0]
+      const bounds = document.getElementById('stage').getBoundingClientRect()
+      divider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + 100, clientY: bounds.top + 50 }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + 40, clientY: bounds.top + 50 }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+      return { before, after: width() }
+    })()
+  `, (v) => v && v.after < v.before)
+
+  // Верхняя и нижняя границы — ими отрезается заголовок окна терминала.
+  await check(areas, 'areas.html', 'верхнюю границу тоже можно подвинуть', `
+    (() => {
+      const top = () => document.querySelector('.grid-cell').getBoundingClientRect().top
+      const before = top()
+      const edge = document.querySelectorAll('.grid-edge-horizontal')[0]
+      const bounds = document.getElementById('stage').getBoundingClientRect()
+      edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + 100, clientY: bounds.top }))
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + 100, clientY: bounds.top + 40 }))
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+      return { before, after: top() }
+    })()
+  `, (v) => v && v.after > v.before)
+
+  await check(areas, 'areas.html', 'одна кнопка сохраняет все области разом', `
+    (async () => {
+      document.getElementById('save').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const status = document.getElementById('status')
+      return { cls: status.className, text: status.textContent }
+    })()
+  `, (v) => v && /ok/.test(v.cls) && /сохранено областей — 6/i.test(v.text))
+
   const help = await openPage('help.html')
   await check(help, 'help.html', 'справка загрузилась и в ней есть разделы',
     '[...document.querySelectorAll(".help-block h2")].map(h => h.textContent)',
@@ -394,30 +466,8 @@ app.whenReady().then(async () => {
      })()`, (v) => typeof v === 'string' && !v.includes('Нечего делать'))
   await check(crop, 'crop.html', 'зона перетаскивания есть',
     '!!document.getElementById("dropzone")', (v) => v === true)
-  // Подсказка помощника: обычное окно обрезки её не показывает (заглушка
-  // crop:guided отвечает "нет"), но сама разметка и проброс должны быть на месте.
-  await check(crop, 'crop.html', 'подсказка помощника есть и в обычном окне скрыта',
-    `(() => {
-       const banner = document.getElementById('guided-banner')
-       return {
-         exists: !!banner,
-         hidden: banner ? banner.hidden : null,
-         steps: banner ? banner.querySelectorAll('li').length : 0,
-         wired: typeof window.api.isGuidedCrop === 'function'
-       }
-     })()`, (v) => v && v.exists === true && v.hidden === true && v.steps === 5 && v.wired === true)
   await check(crop, 'crop.html', 'getPathForFile проброшен в окно',
     'typeof window.api.getPathForFile', (v) => v === 'function')
-
-  // Визуальная обрезка. Проверяем именно то, что могло молча не заработать:
-  // политика безопасности страницы способна запретить и загрузку видео, и
-  // позиционирование рамки — а внешне окно при этом выглядит целым.
-  // Когда свои области настроены, расчётное деление на равные части из выбора
-  // убирается: держать рядом измеренные границы и приблизительные незачем.
-  await check(crop, 'crop.html', 'настроенные области вытесняют деление на равные части',
-    '[...document.querySelectorAll("[data-role=stakan] .option")].map(b => b.textContent)',
-    (v) => Array.isArray(v) && v.includes('Левый стакан') && v.includes('Весь кадр')
-      && !v.some((label) => /^Стакан \d+$/.test(label)))
 
   // Идём тем же путём, что и пользователь: выбрать файл кнопкой, затем открыть
   // превью. Раньше здесь видео подсовывалось напрямую в элемент, и из-за этого
@@ -459,40 +509,6 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v && /px$/.test(v.limit || '') && v.videoHeight <= v.allowed + 1 && v.sameWidth === true)
 
-  // Поиск границ панелей: линии должны отрисоваться, а двойной щелчок —
-  // выделить панель ровно от линии до линии. Это главная польза детектора:
-  // попасть мышью в границу с точностью до пикселя невозможно.
-  await check(crop, 'crop.html', 'найденные границы рисуются направляющими', `
-    (async () => {
-      document.querySelector('[data-role="detect"]').click()
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      const guides = document.querySelector('[data-role="guides"]')
-      return {
-        vertical: guides.querySelectorAll('.guide-vertical').length,
-        horizontal: guides.querySelectorAll('.guide-horizontal').length,
-        variantShown: !document.querySelector('[data-role="variant"]').hidden
-      }
-    })()
-  `, (v) => v && v.vertical === 3 && v.horizontal === 1 && v.variantShown === true)
-
-  // Разовая настройка под свой монитор: одна кнопка сохраняет все найденные
-  // колонки как области. Раньше единственной настройкой было деление на шесть
-  // равных частей от 3440 пикселей — разрешения монитора автора.
-  await check(crop, 'crop.html', 'кнопка сохраняет все найденные области разом', `
-    (async () => {
-      const button = document.querySelector('[data-role="save-all"]')
-      const hidden = button.hidden
-      button.click()
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      return {
-        hidden,
-        status: document.querySelector('[data-role="status"]').textContent,
-        options: [...document.querySelectorAll("[data-role=stakan] .option")].map(b => b.textContent)
-      }
-    })()
-  `, (v) => v && v.hidden === false && /Сохранено областей: 3/.test(v.status || '')
-       && v.options.includes('Стакан 1') && v.options.includes('Стакан 3'))
-
   // Нажатие на кнопку области должно показывать её прямо на кадре — иначе по
   // названию "Стакан 2" не понять, что именно вырежется.
   // Нажатие на кнопку области не должно разворачивать окно во весь экран:
@@ -531,30 +547,7 @@ app.whenReady().then(async () => {
       await new Promise((resolve) => setTimeout(resolve, 300))
       return { whole, area: size(), label: area.textContent }
     })()
-  `, (v) => v && /^320x240/.test(v.whole || '') && /^100x/.test(v.area || ''))
-
-
-  await check(crop, 'crop.html', 'двойной щелчок выделяет панель от границы до границы', `
-    (async () => {
-      // Границы относятся к загруженному кадру и сбрасываются при повторном
-      // открытии превью — ищем их заново.
-      document.querySelector('[data-role="detect"]').click()
-      const stage = document.querySelector('[data-role="stage"]')
-      const video = document.querySelector('[data-role="video"]')
-      const box = document.querySelector('[data-role="box"]')
-      const bounds = stage.getBoundingClientRect()
-      // Точка внутри средней колонки (между линиями 100 и 200 из 320)
-      const scale = video.clientWidth / 320
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      box.dispatchEvent(new MouseEvent('dblclick', {
-        clientX: bounds.left + 150 * scale, clientY: bounds.top + 100, bubbles: true
-      }))
-      return {
-        size: document.querySelector('[data-role="size"]').textContent,
-        left: box.style.left
-      }
-    })()
-  `, (v) => v && /^100x\d+ из 320x240$/.test(v.size || ''))
+  `, (v) => v && /^320x240/.test(v.whole || '') && /^160x/.test(v.area || ''))
 
   // Дорожка обрезки по времени: ручки должны писать в те же числовые поля,
   // которые читает getOptions — иначе на дорожке одно, а вырежется другое.
@@ -615,52 +608,6 @@ app.whenReady().then(async () => {
       return { before, after: box.style.width, size: preview.querySelector('[data-role="size"]').textContent }
     })()
   `, (v) => v && v.before !== v.after && /^\d+x\d+ из 320x240$/.test(v.size || ''))
-
-  // Сетка областей: человек говорит, на сколько частей делить, и сразу видит
-  // их на кадре с номерами. Это единственный путь для тех, у кого поиск границ
-  // не сработал, поэтому проверяем его целиком — от ввода числа до сохранения.
-  // Идёт последней: сетка меняет и разбивку, и список сохранённых областей.
-  await check(crop, 'crop.html', 'число частей сразу рисует пронумерованные области', `
-    (async () => {
-      const input = document.querySelector('[data-role="grid-count"]')
-      input.value = '6'
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise((resolve) => setTimeout(resolve, 150))
-      return {
-        cells: document.querySelectorAll('.grid-cell').length,
-        numbers: [...document.querySelectorAll('.grid-number')].map((el) => el.textContent).join(''),
-        dividers: document.querySelectorAll('.grid-edge-vertical').length,
-        edges: document.querySelectorAll('.grid-edge-horizontal').length,
-        boxHidden: document.querySelector('[data-role="box"]').hidden
-      }
-    })()
-  `, (v) => v && v.cells === 6 && v.numbers === '123456' && v.dividers === 5
-       && v.edges === 2 && v.boxHidden === true)
-
-  // Границы двигаются мышью — это главное действие в этом режиме.
-  await check(crop, 'crop.html', 'границу можно подвинуть мышью', `
-    (() => {
-      const cellWidth = () => document.querySelector('.grid-cell').getBoundingClientRect().width
-      const before = cellWidth()
-      const divider = document.querySelectorAll('.grid-edge-vertical')[0]
-      const bounds = document.querySelector('[data-role="stage"]').getBoundingClientRect()
-      divider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + 50, clientY: bounds.top + 50 }))
-      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: bounds.left + 20, clientY: bounds.top + 50 }))
-      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
-      return { before, after: cellWidth() }
-    })()
-  `, (v) => v && v.after < v.before)
-
-  // Одна кнопка создаёт все шесть областей разом: по отдельности сохранять
-  // каждую — ровно тот ритуал, ради избавления от которого это и сделано.
-  await check(crop, 'crop.html', 'одна кнопка сохраняет все области сетки', `
-    (async () => {
-      document.querySelector('[data-role="save-all"]').click()
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      return document.querySelector('[data-role="status"]').textContent
-    })()
-  `, (v) => typeof v === 'string' && /Сохранено областей: 6/.test(v))
-
 
   // Помощник первой настройки. Главное, что здесь может молча сломаться:
   // шаги перестают переключаться, проверки показывают не тот исход, а данные

@@ -24,13 +24,6 @@ function setClipPath(filePath) {
 // известен основному процессу и окно просто забирает его при открытии.
 window.api.getDroppedFile().then(setClipPath)
 
-// Окно открыл помощник первой настройки — значит человек здесь впервые и
-// пришёл именно за областями. Показываем порядок действий, чтобы не искать
-// нужные кнопки среди всех остальных.
-window.api.isGuidedCrop().then((guided) => {
-  if (guided) document.getElementById('guided-banner').hidden = false
-})
-
 setupFileDrop(dropzone, setClipPath)
 
 pickButton.addEventListener('click', async () => {

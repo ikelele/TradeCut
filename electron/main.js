@@ -7,7 +7,7 @@ const { createUpdater } = require('./updater')
 const { createTray } = require('./tray')
 const { createNotifier } = require('./notifier')
 const autostart = require('./autostart')
-const { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openHelpWindow, openSetupWindow } = require('./windows')
+const { setWindowsLogger, openMainWindow, getMainWindow, openAreasWindow, openCropWindow, openHelpWindow, openSetupWindow } = require('./windows')
 
 const APP_USER_MODEL_ID = 'com.tradecut.app'
 
@@ -72,10 +72,9 @@ function main() {
   // свой файл само (crop:dropped-file), т.к. одновременно может быть открыто
   // несколько окон с разными файлами.
   const cropWindowFiles = new Map()
-  // Окна обрезки, открытые помощником первой настройки: в них сверху висит
-  // порядок действий. Отдельным множеством, а не полем в cropWindowFiles,
-  // чтобы не менять то, что окно уже спрашивает про свой файл.
-  const guidedCropWindows = new Set()
+  // Клип, с которым открыли окно разметки: помощник настройки только что
+  // сохранил ради кадра повтор и передаёт его сюда.
+  const areasWindowFiles = new Map()
 
   let logger = null
   let log = (message) => console.log(message)
@@ -134,15 +133,19 @@ function main() {
     if (win) win.webContents.send('status:changed', statusForWindow())
   }
 
-  function openCropWindowFor(filePath, { guided = false } = {}) {
+  function openAreasWindowFor(filePath) {
+    const win = openAreasWindow()
+    const id = win.webContents.id
+    if (filePath) areasWindowFiles.set(id, filePath)
+    win.on('closed', () => areasWindowFiles.delete(id))
+    return win
+  }
+
+  function openCropWindowFor(filePath) {
     const win = openCropWindow()
     const id = win.webContents.id
     cropWindowFiles.set(id, filePath)
-    if (guided) guidedCropWindows.add(id)
-    win.on('closed', () => {
-      cropWindowFiles.delete(id)
-      guidedCropWindows.delete(id)
-    })
+    win.on('closed', () => cropWindowFiles.delete(id))
     return win
   }
 
@@ -263,7 +266,8 @@ function main() {
 
     ipcMain.handle('crop:dropped-file', (event) => cropWindowFiles.get(event.sender.id) || null)
 
-    ipcMain.handle('crop:guided', (event) => guidedCropWindows.has(event.sender.id))
+    ipcMain.handle('areas:clip', (event) => areasWindowFiles.get(event.sender.id) || null)
+    ipcMain.on('areas:open', () => openAreasWindowFor(null))
 
     // Проверки помощника первой настройки. Смысл всех трёх один: показать
     // человеку результат сразу, а не оставить выяснять по цвету значка в трее,
@@ -298,7 +302,7 @@ function main() {
       const { clipPath, error } = await appCore.saveManualReplay(SETUP_REPLAY_SEC)
       if (error) return { error }
 
-      openCropWindowFor(clipPath, { guided: true })
+      openAreasWindowFor(clipPath)
       return { clipPath }
     })
 

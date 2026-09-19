@@ -138,6 +138,24 @@ function getMainWindow() {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
 }
 
+// Окно разметки областей. Своя задача, свой размер: кадр здесь главный, а не
+// то, что вокруг него, поэтому окно широкое и открывается одно на программу.
+let areasWindow = null
+
+function openAreasWindow() {
+  if (areasWindow && !areasWindow.isDestroyed()) {
+    return raiseWindow(areasWindow)
+  }
+  areasWindow = createWindow({
+    page: 'areas.html',
+    width: 1100,
+    height: 760,
+    title: 'TradeCut — разметка областей'
+  })
+  areasWindow.on('closed', () => { areasWindow = null })
+  return areasWindow
+}
+
 // Окно ручной обрезки. Может открываться как с уже известным файлом (его
 // перетащили на .exe), так и пустым — тогда файл выбирается в самом окне
 // (перетаскиванием или кнопкой). Их может быть несколько одновременно.
@@ -185,4 +203,4 @@ function openSetupWindow() {
   return setupWindow
 }
 
-module.exports = { setWindowsLogger, openMainWindow, getMainWindow, openCropWindow, openHelpWindow, openSetupWindow }
+module.exports = { setWindowsLogger, openMainWindow, getMainWindow, openAreasWindow, openCropWindow, openHelpWindow, openSetupWindow }
