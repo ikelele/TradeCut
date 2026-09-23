@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('api', {
   // Разметка областей — отдельное окно: там у кадра своя задача и свой размер
   openAreas: () => ipcRenderer.send('areas:open'),
   getAreasClip: () => ipcRenderer.invoke('areas:clip'),
+  // Кадр записи картинкой — окно разметки показывает его вместо видео
+  getAreasFrame: (clipPath) => ipcRenderer.invoke('areas:frame', clipPath),
   openHelp: () => ipcRenderer.send('help:open'),
   openSetup: () => ipcRenderer.send('setup:open'),
   openSettings: () => ipcRenderer.send('settings:open'),

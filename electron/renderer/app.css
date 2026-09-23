@@ -864,10 +864,13 @@ select:focus { outline: 1px solid var(--accent); }
   line-height: 0;
 }
 
-.areas-stage video {
+.areas-stage img {
   display: block;
   width: 100%;
   height: 100%;
+  /* Картинка может прийти уменьшенной (кадр шире 3440 ужимается), а сцена
+     размечена в пикселях исходного кадра — растягиваем ровно по сцене. */
+  object-fit: fill;
 }
 
 .areas-empty {

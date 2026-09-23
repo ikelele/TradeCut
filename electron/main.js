@@ -267,6 +267,26 @@ function main() {
     ipcMain.handle('crop:dropped-file', (event) => cropWindowFiles.get(event.sender.id) || null)
 
     ipcMain.handle('areas:clip', (event) => areasWindowFiles.get(event.sender.id) || null)
+
+    // Кадр для окна разметки — картинкой из ffmpeg, а не видео в окне: окнам
+    // видеокарта отключена, и HEVC встроенный браузер без неё не раскодирует
+    // (см. grabFrameJpeg). Размер отдаём настоящий, а не картинки: области
+    // хранятся в пикселях исходного кадра.
+    ipcMain.handle('areas:frame', async (_event, clipPath) => {
+      const { probeVideoSize, probeDurationSeconds } = require('../src/clipper')
+      const { grabFrameJpeg } = require('../src/videoFrame')
+      const size = await probeVideoSize(clipPath)
+      const duration = await probeDurationSeconds(clipPath)
+      // Не самый первый кадр: в начале записи терминал бывает ещё не отрисован
+      const timeSec = Math.min(1, (duration || 0) / 2)
+      const jpeg = await grabFrameJpeg(clipPath, timeSec)
+      return {
+        dataUri: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
+        width: size.width,
+        height: size.height,
+        timeSec
+      }
+    })
     ipcMain.on('areas:open', () => openAreasWindowFor(null))
 
     // Проверки помощника первой настройки. Смысл всех трёх один: показать

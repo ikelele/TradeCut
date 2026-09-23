@@ -166,6 +166,16 @@ app.whenReady().then(async () => {
   ipcMain.on('window:open-main', () => {})
   // Окно разметки областей получает клип при открытии
   ipcMain.handle('areas:clip', () => path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv'))
+  // Кадр для окна разметки — настоящим ffmpeg, тем же путём, что в программе
+  ipcMain.handle('areas:frame', async (_event, clipPath) => {
+    const { probeVideoSize, probeDurationSeconds } = require('../src/clipper')
+    const { grabFrameJpeg } = require('../src/videoFrame')
+    const size = await probeVideoSize(clipPath)
+    const duration = await probeDurationSeconds(clipPath)
+    const timeSec = Math.min(1, (duration || 0) / 2)
+    const jpeg = await grabFrameJpeg(clipPath, timeSec)
+    return { dataUri: `data:image/jpeg;base64,${jpeg.toString('base64')}`, width: size.width, height: size.height, timeSec }
+  })
   ipcMain.on('areas:open', () => {})
   // Проверка обновлений отвечает по очереди всем, чем может: сначала "всё
   // свежее", потом пустой список выпусков, потом настоящая ошибка сети.
@@ -462,6 +472,24 @@ app.whenReady().then(async () => {
   // всё место, а человек говорит, на сколько частей делить. Раньше это жило
   // вперемешку с обрезкой клипа, и кадру доставались остатки.
   const areas = await openPage('areas.html')
+
+  // Кадр — картинкой от ffmpeg, а не видео окна. Окнам программы отключена
+  // видеокарта, и HEVC встроенный браузер без неё не раскодирует: запись на
+  // два монитора (6880x1440, а её иначе как в HEVC не записать) показывалась
+  // чёрным прямоугольником.
+  await check(areas, 'areas.html', 'кадр показан картинкой, а не видео', `
+    (async () => {
+      const picture = document.getElementById('picture')
+      for (let attempt = 0; attempt < 40 && !(picture.naturalWidth > 0); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
+      return {
+        hasVideo: !!document.querySelector('video'),
+        kind: (picture.src || '').slice(0, 15),
+        decoded: picture.naturalWidth
+      }
+    })()
+  `, (v) => v && v.hasVideo === false && v.kind === 'data:image/jpeg' && v.decoded > 0)
 
   await check(areas, 'areas.html', 'кадр занимает всё свободное место и не вылезает за него', `
     (() => {

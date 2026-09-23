@@ -18,13 +18,17 @@ const pickButton = document.getElementById('pick')
 const saveButton = document.getElementById('save')
 const frameEl = document.getElementById('frame')
 const stage = document.getElementById('stage')
-const video = document.getElementById('video')
+const picture = document.getElementById('picture')
 const gridLayer = document.getElementById('grid')
 const emptyEl = document.getElementById('empty')
 const statusEl = document.getElementById('status')
 
 let clipPath = null
 let natural = null // { width, height } исходного кадра
+// На каком моменте записи снят показанный кадр — по нему же ищутся границы
+let frameTimeSec = 0
+// Номер последнего запроса кадра: пока он достаётся, могут выбрать другой файл
+let frameRequest = 0
 // Сетка в пикселях ИСХОДНОГО кадра, а не экранных: иначе изменение размера
 // окна сдвигало бы уже расставленные границы, а это главное, что человек
 // здесь делает руками.
@@ -40,7 +44,7 @@ function setStatus(text, kind) {
 // ── Перевод между пикселями кадра и экранными ─────────────────────────────
 
 function shown() {
-  return { width: video.clientWidth, height: video.clientHeight }
+  return { width: picture.clientWidth, height: picture.clientHeight }
 }
 
 function toScreen(value, axis) {
@@ -164,36 +168,43 @@ window.addEventListener('resize', () => {
   if (grid) render()
 })
 
-// ── Видео ─────────────────────────────────────────────────────────────────
+// ── Кадр ──────────────────────────────────────────────────────────────────
+//
+// Кадр достаёт ffmpeg программы и присылает картинкой. Раньше здесь было
+// видео, и запись в HEVC показывалась чёрным прямоугольником: окнам
+// видеокарта отключена, а HEVC встроенный браузер без неё не раскодирует.
+// Окну и не нужно видео — ему нужен один кадр.
 
-function openClip(filePath) {
+async function openClip(filePath) {
   if (!filePath) return
   clipPath = filePath
+  const request = ++frameRequest
   emptyEl.hidden = true
   stage.hidden = false
   setStatus('Загружаю кадр...')
-  video.src = `file:///${String(filePath).replace(/\\/g, '/')}`
-  video.load()
-}
 
-video.addEventListener('loadedmetadata', () => {
-  natural = { width: video.videoWidth, height: video.videoHeight }
+  let frame
+  try {
+    frame = await window.api.getAreasFrame(filePath)
+  } catch (error) {
+    if (request !== frameRequest) return
+    setStatus(`Не удалось достать кадр из этого файла: ${error.message || error}`, 'error')
+    return
+  }
+  if (request !== frameRequest) return // за это время выбрали другой файл
+
+  natural = { width: frame.width, height: frame.height }
+  frameTimeSec = frame.timeSec || 0
+  picture.src = frame.dataUri
   // Размер кадра считаем сами — см. fitFrame.js. Попытка отдать это браузеру
   // (ширина 100% + пропорции) на 3440x1440 давала кадр выше, чем окно, и его
   // низ вместе с нижней границей уезжал под подсказку.
   fitFrameInto(stage, frameEl, natural)
-  // Ставим кадр из середины записи: в самом начале терминал может быть ещё
-  // не отрисован, да и разглядывать первый кадр обычно нечего.
-  video.currentTime = Math.min(1, (video.duration || 0) / 2)
   detectButton.disabled = false
   const count = Number(countInput.value)
   if (Number.isFinite(count) && count >= 2) setCount(count)
   else setStatus(`Кадр ${natural.width}x${natural.height}. Впиши, сколько стаканов на экране.`)
-})
-
-video.addEventListener('error', () => {
-  setStatus('Не удалось открыть этот файл как видео.', 'error')
-})
+}
 
 pickButton.addEventListener('click', async () => {
   openClip(await window.api.pickVideoFile())
@@ -219,7 +230,7 @@ detectButton.addEventListener('click', async () => {
   detectButton.disabled = true
   setStatus('Ищу границы панелей на этом кадре...')
   try {
-    const found = await window.api.detectPanels(clipPath, video.currentTime || 0)
+    const found = await window.api.detectPanels(clipPath, frameTimeSec)
     variants = found.variants && found.variants.length > 0 ? found.variants : [found.vertical || []]
     variantIndex = 0
     if (variants[0].length < 2) {
