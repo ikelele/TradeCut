@@ -63,6 +63,11 @@ async function check(win, page, description, script, validate) {
   }
 }
 
+// Как в самой программе: окна работают без видеокарты (см. electron/main.js).
+// Без этой строки проверки шли в других условиях, чем у пользователя: запись в
+// HEVC здесь показывалась, а у него — чёрным прямоугольником.
+app.disableHardwareAcceleration()
+
 app.whenReady().then(async () => {
   initAppPaths()
   const { loadConfig } = require('../src/config')
@@ -97,7 +102,27 @@ app.whenReady().then(async () => {
   ipcMain.handle('crop:dropped-file', () => null)
   // Кнопка "Выбрать файл..." отдаёт тестовый клип — так проверки редактора идут
   // тем же путём, что и у пользователя, а не подсовывают видео напрямую.
-  ipcMain.handle('dialog:pick-video', () => path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv'))
+  let pickAnswer = path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv')
+  ipcMain.handle('dialog:pick-video', () => pickAnswer)
+
+  // Запись в HEVC — такая, какая получается на двух мониторах. Делаем её
+  // встроенным ffmpeg программы из тестового клипа, чтобы проверка не зависела
+  // от видеокарты машины, на которой идёт.
+  const hevcClip = path.join(require('os').tmpdir(), 'tradecut-smoke-hevc.mp4')
+  require('child_process').execFileSync(require('../src/ffmpegTools').getFfmpegPath(), [
+    '-v', 'error', '-y', '-i', pickAnswer, '-t', '6', '-c:v', 'libx265', '-an', hevcClip
+  ])
+
+  // Кадр картинкой — настоящим ffmpeg, тем же путём, что в программе
+  ipcMain.handle('frame:still', async (_event, clipPath, timeSec) => {
+    const { probeVideoSize, probeDurationSeconds } = require('../src/clipper')
+    const { grabFrameJpeg } = require('../src/videoFrame')
+    const size = await probeVideoSize(clipPath)
+    const duration = await probeDurationSeconds(clipPath)
+    const at = Math.max(0, Math.min(Number(timeSec) || 0, Math.max(0, duration - 0.1)))
+    const jpeg = await grabFrameJpeg(clipPath, at)
+    return { dataUri: `data:image/jpeg;base64,${jpeg.toString('base64')}`, width: size.width, height: size.height, duration, timeSec: at }
+  })
   // Границы панелей для тестового кадра 320x240: две вертикальные линии делят
   // его на три колонки, одна горизонтальная отделяет "шапку".
   ipcMain.handle('filmstrip:build', (_event, clipPath, durationSec) => {
@@ -161,7 +186,12 @@ app.whenReady().then(async () => {
     version: '9.9.9'
   }
   ipcMain.handle('status:get', () => statusAnswer)
-  ipcMain.handle('replay:save', () => ({ clipPath: 'C:\replays\проверка.mp4' }))
+  // Возвращаем в имени файла то, что окно прислало: так проверка видит, что
+  // выбранная область действительно дошла до сохранения.
+  ipcMain.handle('replay:save', (_event, durationSec, areaKey) => ({
+    clipPath: `C:\\replays\\${durationSec} ${areaKey || 'весь экран'}.mp4`,
+    error: null
+  }))
   ipcMain.on('folder:open', () => {})
   ipcMain.on('window:open-main', () => {})
   // Окно разметки областей получает клип при открытии
@@ -207,6 +237,24 @@ app.whenReady().then(async () => {
   await check(mainWin, 'main.html', 'кнопки повтора взяты из настроек',
     '[...document.querySelectorAll("[data-role=replay] .option")].map(b => b.textContent)',
     (v) => Array.isArray(v) && v.length === config.clip.replayPresetsSec.length && v[0] === '15 сек')
+
+  // Повтор можно сохранить сразу стаканом: на двух мониторах полный повтор —
+  // кадр в 6880 пикселей, а смотреть обычно нужно один стакан.
+  await check(mainWin, 'main.html', 'повтор можно сохранить одним стаканом', `
+    (async () => {
+      const select = document.getElementById('replay-area')
+      const options = [...select.options].map((o) => o.textContent)
+      select.value = 'preset:Левый стакан'
+      select.dispatchEvent(new Event('change'))
+      document.querySelector('[data-role=replay] .option').click()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      const status = document.getElementById('now-status').textContent
+      select.value = ''
+      select.dispatchEvent(new Event('change'))
+      return { options, status }
+    })()
+  `, (v) => v && v.options[0] === 'Весь экран' && v.options.includes('Левый стакан')
+       && v.status.includes('preset:Левый стакан'))
 
   await check(mainWin, 'main.html', 'вкладки переключаются', `
     (() => {
@@ -905,6 +953,47 @@ app.whenReady().then(async () => {
     })()
   `, (v) => v && v.before !== v.after && v.size.includes(' из 320x240')
        && v.rect.sourceWidth === 320 && v.pressed === 0)
+
+  // Запись в HEVC окно раскодировать не может: окнам отключена видеокарта, а
+  // HEVC встроенный браузер умеет только ею. Раньше на её месте было чёрное
+  // поле и рамка «1x1 из 0x0»: звук читался, длительность была, а картинки нет.
+  // Теперь кадр достаёт ffmpeg — перематывать, резать и выбирать область
+  // можно, не проигрывается только само видео.
+  pickAnswer = hevcClip
+  const cropHevc = await openPage('crop.html')
+  await check(cropHevc, 'crop.html (HEVC)', 'запись, которую окно не проигрывает, показана кадром', `
+    new Promise((resolve) => {
+      document.getElementById('pick').click()
+      const started = Date.now()
+      const wait = () => {
+        const still = document.getElementById('still')
+        if ((!still.hidden && still.naturalWidth > 0) || Date.now() - started > 15000) {
+          resolve({
+            still: !still.hidden && still.naturalWidth > 0,
+            videoHidden: document.getElementById('video').hidden,
+            size: document.getElementById('size').textContent,
+            playDisabled: document.getElementById('play').disabled
+          })
+        } else setTimeout(wait, 150)
+      }
+      wait()
+    })
+  `, (v) => v && v.still === true && v.videoHidden === true
+       && v.size.startsWith('320x240') && v.playDisabled === true)
+
+  await check(cropHevc, 'crop.html (HEVC)', 'такую запись можно перематывать и резать по времени', `
+    (async () => {
+      const timeline = document.getElementById('timeline')
+      const bounds = timeline.getBoundingClientRect()
+      timeline.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: bounds.left + bounds.width * 0.5, clientY: bounds.top + 5 }))
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      const time = document.getElementById('time').textContent
+      document.getElementById('mark-start').click()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      return { time, trim: editor.getTrim() }
+    })()
+  `, (v) => v && v.time.startsWith('0:03') && v.trim.trimStart >= 2.5 && v.trim.trimStart <= 3.5)
+  pickAnswer = path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv')
 
   // Помощник первой настройки. Главное, что здесь может молча сломаться:
   // шаги перестают переключаться, проверки показывают не тот исход, а данные

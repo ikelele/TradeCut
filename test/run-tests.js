@@ -255,6 +255,149 @@ async function testStartDoesNotWaitForObs() {
   console.log('[OK] testStartDoesNotWaitForObs')
 }
 
+// Повтор можно сохранить сразу стаканом, а не только всем экраном.
+//
+// На двух мониторах полный повтор — кадр в 6880 пикселей, а смотреть обычно
+// нужно один стакан. Проверяем весь путь: OBS отдал буфер -> вырезан повтор ->
+// из него вырезан стакан. Полный повтор при этом остаётся рядом.
+async function testManualReplayCanCutOneStakan() {
+  const os = require('os')
+  const { createApp } = require('../src/app')
+  const { DEFAULT_CONFIG } = require('../src/config')
+  const { probeVideoSize } = require('../src/clipper')
+
+  const previousLocalAppData = process.env.LOCALAPPDATA
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-replay-'))
+  process.env.LOCALAPPDATA = tmpHome
+  const source = path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv')
+  let saves = 0
+
+  // Поддельный OBS: на каждое «сохрани буфер» кладёт свежую копию записи —
+  // исходник программа после нарезки может удалить.
+  const fakeObs = () => ({
+    connect: async () => {},
+    disconnect: async () => {},
+    isReplayBufferActive: async () => true,
+    saveReplayBufferAndWaitForPath: async () => {
+      const copy = path.join(tmpHome, `obs-replay-${++saves}.mkv`)
+      fs.copyFileSync(source, copy)
+      return copy
+    }
+  })
+
+  try {
+    const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
+    config.terminal.logsDirOverride = path.join(tmpHome, 'журнала-тут-нет')
+    config.clip.manualReplayOutputDir = path.join(tmpHome, 'повторы')
+    const appCore = createApp({ config, log: () => {}, obsClientFactory: fakeObs })
+    await appCore.start()
+
+    try {
+      // Весь экран — как было
+      const whole = await appCore.saveManualReplay(4, null)
+      assert.strictEqual(whole.error, null, `весь экран: ${whole.error}`)
+      assert.strictEqual((await probeVideoSize(whole.clipPath)).width, 320)
+
+      // Своя область — берётся рамка, имя области попадает в имя файла
+      const byPreset = await appCore.saveManualReplay(4, {
+        cropRect: { x: 0, y: 0, width: 160, height: 240, sourceWidth: 320, sourceHeight: 240 },
+        cropPresetName: 'Стакан 1'
+      })
+      assert.strictEqual(byPreset.error, null, `своя область: ${byPreset.error}`)
+      assert.strictEqual((await probeVideoSize(byPreset.clipPath)).width, 160, 'из повтора должен вырезаться стакан')
+      assert.ok(path.basename(byPreset.clipPath).includes('Стакан 1'), `в имени файла должен быть стакан: ${byPreset.clipPath}`)
+      assert.ok(fs.existsSync(byPreset.fullClipPath), 'полный повтор должен остаться рядом')
+
+      // Равная доля — без своих областей, как в трее
+      const byIndex = await appCore.saveManualReplay(4, { stakanIndex: 2, stakanCount: 2 })
+      assert.strictEqual(byIndex.error, null, `равная доля: ${byIndex.error}`)
+      assert.strictEqual((await probeVideoSize(byIndex.clipPath)).width, 160)
+    } finally {
+      await appCore.stop()
+    }
+  } finally {
+    process.env.LOCALAPPDATA = previousLocalAppData
+    fs.rmSync(tmpHome, { recursive: true, force: true })
+  }
+
+  console.log('[OK] testManualReplayCanCutOneStakan')
+}
+
+// Меню трея: «Сохранить повтор» — весь экран в один щелчок, как было, а ниже
+// то же самое сразу со стаканом.
+//
+// Трей живёт в Electron, и в обычных проверках его меню не видно вовсе. Здесь
+// Electron подменяется: значок и меню ненастоящие, но шаблон меню строит тот
+// же код, что в программе, и по его пунктам можно «щёлкнуть».
+function testTrayReplayMenuOffersStakans() {
+  const electronPath = require.resolve('electron')
+  let lastTemplate = null
+  class FakeTray {
+    on() {}
+    setContextMenu() {}
+    setToolTip() {}
+    setImage() {}
+    destroy() {}
+    isDestroyed() { return false }
+  }
+  const fakeImage = { isEmpty: () => false, resize() { return this }, getSize: () => ({ width: 16, height: 16 }) }
+  const fakeElectron = {
+    Tray: FakeTray,
+    Menu: { buildFromTemplate: (template) => { lastTemplate = template; return template } },
+    nativeImage: { createFromPath: () => fakeImage },
+    screen: { getPrimaryDisplay: () => ({ scaleFactor: 1 }) },
+    app: { isPackaged: false }
+  }
+
+  const saved = require.cache[electronPath]
+  require.cache[electronPath] = { id: electronPath, filename: electronPath, loaded: true, exports: fakeElectron }
+  const ours = ['../electron/tray', '../electron/paths'].map((name) => require.resolve(name))
+  for (const file of ours) delete require.cache[file]
+
+  try {
+    const { createTray } = require('../electron/tray')
+    const presets = [
+      { name: 'Стакан 1', x: 0, y: 0, width: 573, height: 1440, sourceWidth: 6880, sourceHeight: 1440 },
+      { name: 'Стакан 2', x: 573, y: 0, width: 573, height: 1440, sourceWidth: 6880, sourceHeight: 1440 }
+    ]
+    const saves = []
+    const tray = createTray({
+      autostartAvailable: false,
+      autostartChecked: false,
+      trayHistoryLimit: 5,
+      cropPresets: presets,
+      replayPresetsSec: [15, 60],
+      onSaveManualReplay: (seconds, area) => saves.push({ seconds, area }),
+      onOpenMainWindow: () => {}
+    })
+    tray.setCropPresets(presets) // меню собирается заново — берём свежий шаблон
+
+    const replay = lastTemplate.find((item) => item.label === 'Сохранить повтор')
+    assert.ok(replay, 'в меню трея должен быть «Сохранить повтор»')
+
+    // Сверху — весь экран, одним щелчком, как было
+    assert.strictEqual(replay.submenu[0].label, '15 сек')
+    replay.submenu[0].click()
+    assert.deepStrictEqual(saves[0], { seconds: 15, area: null }, 'верхние пункты сохраняют весь экран')
+
+    // Ниже — по стаканам: стакан -> длительность
+    const second = replay.submenu.find((item) => item.label === 'Стакан 2')
+    assert.ok(second && Array.isArray(second.submenu), `стаканы должны быть в меню повтора: ${replay.submenu.map((i) => i.label).join(', ')}`)
+    second.submenu.find((item) => item.label === '1 мин').click()
+    assert.strictEqual(saves[1].seconds, 60)
+    assert.strictEqual(saves[1].area.cropPresetName, 'Стакан 2')
+    assert.strictEqual(saves[1].area.cropRect.x, 573, 'в сохранение должна уйти рамка именно этого стакана')
+
+    tray.destroy()
+  } finally {
+    for (const file of ours) delete require.cache[file]
+    if (saved) require.cache[electronPath] = saved
+    else delete require.cache[electronPath]
+  }
+
+  console.log('[OK] testTrayReplayMenuOffersStakans')
+}
+
 // Молчащий OBS не должен вешать приложение.
 //
 // Так это и выглядело вживую: OBS принимал соединение и замолкал (он так
@@ -1704,6 +1847,8 @@ async function main() {
   testDetectPanelGuidesOnPaleTheme()
   testDetectPanelGuidesOnBlankFrame()
   testDetectPanelGuidesWithInnerDividers()
+  await testManualReplayCanCutOneStakan()
+  testTrayReplayMenuOffersStakans()
   testSanitizeOutputFileName()
   await testCropClipUsesGivenNameAndKeepsPrevious()
   await testCreateMergedClipFromReplayWithinBounds()

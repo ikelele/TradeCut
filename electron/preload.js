@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('api', {
   getAreasClip: () => ipcRenderer.invoke('areas:clip'),
   // Кадр записи картинкой — окно разметки показывает его вместо видео
   getAreasFrame: (clipPath) => ipcRenderer.invoke('areas:frame', clipPath),
+  // Кадр на заданном моменте — редактор показывает его вместо видео, которое
+  // окно раскодировать не может
+  getStillFrame: (clipPath, timeSec) => ipcRenderer.invoke('frame:still', clipPath, timeSec),
   openHelp: () => ipcRenderer.send('help:open'),
   openSetup: () => ipcRenderer.send('setup:open'),
   openSettings: () => ipcRenderer.send('settings:open'),
@@ -43,7 +46,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('status:changed', handler)
     return () => ipcRenderer.off('status:changed', handler)
   },
-  saveReplay: (durationSec) => ipcRenderer.invoke('replay:save', durationSec),
+  // areaKey: '' — весь экран, 'preset:<имя>' — своя область, 'stakan:<N>' — равная доля
+  saveReplay: (durationSec, areaKey) => ipcRenderer.invoke('replay:save', durationSec, areaKey),
   openFolderPath: (dirPath) => ipcRenderer.send('folder:open', dirPath),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
   onUpdateProgress: (listener) => {

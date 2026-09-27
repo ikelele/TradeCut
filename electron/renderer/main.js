@@ -96,6 +96,39 @@ function renderStatus(status) {
   addFact('Версия', status.version)
 }
 
+// Что сохранять: весь экран или стакан. Список — те же области, что в трее:
+// свои, а если их нет — равные доли. Выбор запоминается между запусками.
+const replayAreaEl = document.getElementById('replay-area')
+const REPLAY_AREA_KEY = 'tradecut.replayArea'
+
+function readRememberedReplayArea() {
+  try { return localStorage.getItem(REPLAY_AREA_KEY) || '' } catch { return '' }
+}
+
+function renderReplayAreas(config) {
+  const presets = (config && config.clip && config.clip.cropPresets) || []
+  const count = Number(config && config.clip && config.clip.stakanCount) || 0
+  const wanted = replayAreaEl.value || readRememberedReplayArea()
+
+  replayAreaEl.innerHTML = ''
+  const add = (value, label) => {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    replayAreaEl.appendChild(option)
+  }
+  add('', 'Весь экран')
+  if (presets.length > 0) for (const preset of presets) add(`preset:${preset.name}`, preset.name)
+  else for (let i = 1; i <= count; i++) add(`stakan:${i}`, `Стакан ${i}`)
+
+  // Запомненной области могло не остаться — тогда весь экран
+  replayAreaEl.value = [...replayAreaEl.options].some((option) => option.value === wanted) ? wanted : ''
+}
+
+replayAreaEl.addEventListener('change', () => {
+  try { localStorage.setItem(REPLAY_AREA_KEY, replayAreaEl.value) } catch {}
+})
+
 // Кнопки длительностей берём из настроек: там человек уже перечислил те, что
 // ему нужны, и второй список в другом месте разошёлся бы с первым.
 function renderReplayButtons(seconds) {
@@ -109,9 +142,10 @@ function renderReplayButtons(seconds) {
     button.addEventListener('click', async () => {
       button.disabled = true
       nowStatusEl.className = 'status busy'
-      nowStatusEl.textContent = `Прошу у OBS последние ${button.textContent}...`
+      const areaLabel = replayAreaEl.value ? replayAreaEl.selectedOptions[0].textContent : ''
+      nowStatusEl.textContent = `Прошу у OBS последние ${button.textContent}${areaLabel ? ` и вырезаю «${areaLabel}»` : ''}...`
       try {
-        const result = await window.api.saveReplay(value)
+        const result = await window.api.saveReplay(value, replayAreaEl.value)
         if (result.error) {
           nowStatusEl.className = 'status error'
           nowStatusEl.textContent = result.error
@@ -140,7 +174,19 @@ window.api.onStatusChanged((status) => {
   clipsDir = status.clipsDir
   renderStatus(status)
 })
-window.api.getConfig().then((config) => renderReplayButtons(config.clip.replayPresetsSec))
+window.api.getConfig().then((config) => {
+  renderReplayButtons(config.clip.replayPresetsSec)
+  renderReplayAreas(config)
+})
+
+// Области размечают в отдельном окне — список надо подтягивать при возврате
+// на вкладку, иначе только что размеченные стаканы здесь не появятся.
+const nowPanel = document.querySelector('[data-panel="now"]')
+if (nowPanel) {
+  new MutationObserver(() => {
+    if (!nowPanel.hidden) window.api.getConfig().then(renderReplayAreas)
+  }).observe(nowPanel, { attributes: true, attributeFilter: ['hidden'] })
+}
 
 document.getElementById('open-clips-dir').addEventListener('click', () => {
   if (clipsDir) window.api.openFolderPath(clipsDir)

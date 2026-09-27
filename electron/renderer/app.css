@@ -603,6 +603,19 @@ select {
 
 select:focus { outline: 1px solid var(--accent); }
 
+/* Выбор «весь экран / стакан» стоит в одном ряду с кнопками длительности */
+.replay-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.replay-row select {
+  width: auto;
+  min-width: 150px;
+}
+
 /* ── Главное окно: вкладки и состояние ────────────────────────────────── */
 
 .tabs {
@@ -938,11 +951,18 @@ select:focus { outline: 1px solid var(--accent); }
   line-height: 0;
 }
 
-.editor-stage video {
+.editor-stage video,
+.editor-stage img {
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: fill;
 }
+
+/* display: block выше сильнее атрибута hidden — без этого спрятанное видео и
+   кадр-картинка висели бы в сцене оба разом. */
+.editor-stage video[hidden],
+.editor-stage img[hidden] { display: none; }
 
 .editor-empty {
   color: var(--text-dim);

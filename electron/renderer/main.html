@@ -30,8 +30,13 @@
       <dl class="facts" id="facts"></dl>
 
       <div class="field">
-        <label class="field-label">Сохранить повтор прямо сейчас</label>
-        <div class="options" data-role="replay"></div>
+        <label class="field-label" for="replay-area">Сохранить повтор прямо сейчас</label>
+        <div class="replay-row">
+          <select id="replay-area" title="Что сохранить: весь экран или один стакан">
+            <option value="">Весь экран</option>
+          </select>
+          <div class="options" data-role="replay"></div>
+        </div>
         <p class="field-hint">Заберёт последние секунды из буфера OBS, безо всякой сделки. Пригодится, когда на экране произошло что-то интересное</p>
       </div>
 

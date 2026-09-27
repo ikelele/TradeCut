@@ -145,7 +145,9 @@ async function handleMergedParts({ batch, mergedClipPath, config, log, recentCli
 // (например, отдельные клипы серии удалены и ссылаться на них больше нельзя)
 // onReplayBufferStatusChange(isActive) — периодическая проверка (см. start())
 // onIssue(message) — значимая ошибка
-function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged, onStakanReady, onManualReplayReady, onIssue, onReplayBufferStatusChange }) {
+// obsClientFactory — только для проверок: подставить поддельный OBS, чтобы
+// прогнать сохранение повтора от начала до готового файла без живого OBS.
+function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged, onStakanReady, onManualReplayReady, onIssue, onReplayBufferStatusChange, obsClientFactory = createObsClient }) {
   let obsClient = null
   let watcher = null
   let processingChain = Promise.resolve()
@@ -432,23 +434,51 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
   // никому не нужен (там своё уведомление), а помощник первой настройки ждёт
   // путь к файлу, чтобы открыть его для разметки областей. Отклоняйся оно —
   // вызов из трея стал бы необработанным отказом промиса.
-  function saveManualReplay(durationSec) {
+  // area — что вырезать из повтора: { cropRect, cropPresetName } для своей
+  // области, { stakanIndex, stakanCount } для равного деления, null — весь
+  // экран. На двух мониторах полный повтор — это кадр в 6880 пикселей, а
+  // смотреть обычно нужно один стакан.
+  function describeReplayArea(area) {
+    if (!area) return 'весь экран'
+    return area.cropPresetName ? `«${area.cropPresetName}»` : `стакан ${area.stakanIndex}`
+  }
+
+  function saveManualReplay(durationSec, area = null) {
     let settle
     const result = new Promise((resolve) => { settle = resolve })
 
     enqueue(
       async () => {
-        log(`Сохраняю повтор последних ${durationSec}с по команде из трея`)
+        log(`Сохраняю повтор последних ${durationSec}с — ${describeReplayArea(area)}`)
         const replayPath = await obsClient.saveReplayBufferAndWaitForPath()
-        const clipPath = await createManualReplayClip({
-          replayPath,
-          durationSec,
-          outputDir: resolveMediaPath(config.clip.manualReplayOutputDir)
-        })
+        const outputDir = resolveMediaPath(config.clip.manualReplayOutputDir)
+        const clipPath = await createManualReplayClip({ replayPath, durationSec, outputDir })
         log(`Повтор сохранён: ${clipPath}`)
         await deleteSourceReplayIfEnabled(replayPath, config, log)
-        if (onManualReplayReady) onManualReplayReady(clipPath, durationSec)
-        settle({ clipPath, error: null })
+
+        if (!area) {
+          if (onManualReplayReady) onManualReplayReady(clipPath, durationSec)
+          settle({ clipPath, error: null })
+          return
+        }
+
+        // Полный повтор остаётся рядом: вырезанный стакан кладём в ту же папку
+        // повторов, а исходник не трогаем — если вырезалось не то, запись цела.
+        try {
+          const croppedPath = await cropClipToStakan(clipPath, area.stakanIndex ?? null, outputDir, {
+            cropRect: area.cropRect,
+            cropPresetName: area.cropPresetName,
+            stakanCount: area.stakanCount,
+            mute: Boolean(config.clip.trayCropMuted)
+          })
+          log(`Из повтора вырезан ${describeReplayArea(area)}: ${croppedPath}`)
+          if (onManualReplayReady) onManualReplayReady(croppedPath, durationSec)
+          settle({ clipPath: croppedPath, fullClipPath: clipPath, error: null })
+        } catch (error) {
+          const message = `Повтор сохранён целиком (${clipPath}), а вырезать ${describeReplayArea(area)} не вышло: ${error.message}`
+          log(message)
+          settle({ clipPath, fullClipPath: clipPath, error: message })
+        }
       },
       (error) => {
         const message = `Не удалось сохранить повтор: ${error.message}`
@@ -534,7 +564,7 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
     await fsp.rm(checkpointTmpDir, { recursive: true, force: true }).catch(() => {})
     await fsp.mkdir(checkpointTmpDir, { recursive: true })
 
-    obsClient = createObsClient({
+    obsClient = obsClientFactory({
       url: config.obs.url,
       password: config.obs.password,
       onStatus: log,

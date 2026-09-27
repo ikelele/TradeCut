@@ -249,13 +249,29 @@ function createTray({
 
     // Доступно всегда, независимо от того, были ли сегодня сделки: это просто
     // "забрать последние N секунд из буфера прямо сейчас".
+    // Сверху — весь экран, как было: самое частое действие остаётся в один
+    // щелчок. Ниже — то же, но сразу с вырезанным стаканом.
+    const replayAreas = buildAreaEntries()
+    const replayMenu = replayPresetsSec.map((seconds) => ({
+      label: formatReplayLabel(seconds),
+      click: () => onSaveManualReplay(seconds, null)
+    }))
+    if (replayAreas.length > 0) {
+      replayMenu.push({ type: 'separator' }, { label: 'Только стакан', enabled: false })
+      for (const area of replayAreas) {
+        replayMenu.push({
+          label: area.label,
+          submenu: replayPresetsSec.map((seconds) => ({
+            label: formatReplayLabel(seconds),
+            click: () => onSaveManualReplay(seconds, { stakanIndex: area.stakanIndex ?? null, ...area.options })
+          }))
+        })
+      }
+    }
     template.push({
       label: 'Сохранить повтор',
       toolTip: 'Забрать последние N секунд из буфера OBS прямо сейчас',
-      submenu: replayPresetsSec.map((seconds) => ({
-        label: formatReplayLabel(seconds),
-        click: () => onSaveManualReplay(seconds)
-      }))
+      submenu: replayMenu
     })
 
     const shown = recentClips.slice(0, historyLimit)

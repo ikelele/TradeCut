@@ -268,25 +268,46 @@ function main() {
 
     ipcMain.handle('areas:clip', (event) => areasWindowFiles.get(event.sender.id) || null)
 
-    // Кадр для окна разметки — картинкой из ffmpeg, а не видео в окне: окнам
-    // видеокарта отключена, и HEVC встроенный браузер без неё не раскодирует
-    // (см. grabFrameJpeg). Размер отдаём настоящий, а не картинки: области
-    // хранятся в пикселях исходного кадра.
-    ipcMain.handle('areas:frame', async (_event, clipPath) => {
+    // Кадр записи картинкой из ffmpeg, а не видео в окне: окнам видеокарта
+    // отключена, и HEVC встроенный браузер без неё не раскодирует (см.
+    // grabFrameJpeg). Размер отдаём настоящий, а не картинки: области хранятся
+    // в пикселях исходного кадра.
+    //
+    // Размер и длительность одного файла не меняются, а редактор просит кадр
+    // на каждое отпускание дорожки — запоминаем их, чтобы не звать ffprobe
+    // дважды на каждый кадр.
+    const clipMeta = new Map()
+    async function stillFrame(clipPath, timeSec) {
       const { probeVideoSize, probeDurationSeconds } = require('../src/clipper')
       const { grabFrameJpeg } = require('../src/videoFrame')
-      const size = await probeVideoSize(clipPath)
-      const duration = await probeDurationSeconds(clipPath)
-      // Не самый первый кадр: в начале записи терминал бывает ещё не отрисован
-      const timeSec = Math.min(1, (duration || 0) / 2)
-      const jpeg = await grabFrameJpeg(clipPath, timeSec)
+      let meta = clipMeta.get(clipPath)
+      if (!meta) {
+        meta = { size: await probeVideoSize(clipPath), duration: await probeDurationSeconds(clipPath) }
+        if (clipMeta.size > 20) clipMeta.clear()
+        clipMeta.set(clipPath, meta)
+      }
+      // Не дальше конца: кадра «на самой последней миллисекунде» может не быть
+      const at = Math.max(0, Math.min(Number(timeSec) || 0, Math.max(0, meta.duration - 0.1)))
+      const jpeg = await grabFrameJpeg(clipPath, at)
       return {
         dataUri: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
-        width: size.width,
-        height: size.height,
-        timeSec
+        width: meta.size.width,
+        height: meta.size.height,
+        duration: meta.duration,
+        timeSec: at
       }
+    }
+
+    // Окно разметки: не самый первый кадр — в начале записи терминал бывает
+    // ещё не отрисован.
+    ipcMain.handle('areas:frame', async (_event, clipPath) => {
+      const { probeDurationSeconds } = require('../src/clipper')
+      const duration = await probeDurationSeconds(clipPath)
+      return stillFrame(clipPath, Math.min(1, (duration || 0) / 2))
     })
+
+    // Редактор: кадр на заданном моменте, когда само видео окно не показывает
+    ipcMain.handle('frame:still', (_event, clipPath, timeSec) => stillFrame(clipPath, timeSec))
     ipcMain.on('areas:open', () => openAreasWindowFor(null))
 
     // Проверки помощника первой настройки. Смысл всех трёх один: показать
@@ -337,9 +358,27 @@ function main() {
     ipcMain.handle('status:get', () => statusForWindow())
 
     // Повтор по требованию — то же, что пункт в трее, но из окна.
-    ipcMain.handle('replay:save', async (_event, durationSec) => {
+    // Что вырезать из повтора. Окно присылает ключ, а не координаты: рамку
+    // берём из своего конфига — так окно не может прислать ничего, чего нет
+    // среди настроенных областей.
+    function resolveReplayArea(areaKey) {
+      const key = String(areaKey || '')
+      if (key.startsWith('preset:')) {
+        const name = key.slice('preset:'.length)
+        const preset = (config.clip.cropPresets || []).find((item) => item.name === name)
+        return preset ? { cropRect: preset, cropPresetName: preset.name } : null
+      }
+      if (key.startsWith('stakan:')) {
+        const index = Number(key.slice('stakan:'.length))
+        const count = Number(config.clip.stakanCount)
+        return index >= 1 && index <= count ? { stakanIndex: index, stakanCount: count } : null
+      }
+      return null
+    }
+
+    ipcMain.handle('replay:save', async (_event, durationSec, areaKey) => {
       if (!appCore) return { error: 'Слежение за сделками ещё не запущено' }
-      return appCore.saveManualReplay(Number(durationSec) || 15)
+      return appCore.saveManualReplay(Number(durationSec) || 15, resolveReplayArea(areaKey))
     })
 
     // Папка целиком, а не файл в ней: shell:reveal умеет только подсветить
@@ -667,7 +706,7 @@ function main() {
       },
       onOpenMainWindow: () => openMainWindow(),
       onOpenCropFor: (clipPath) => openCropWindowFor(clipPath),
-      onSaveManualReplay: (durationSec) => appCore.saveManualReplay(durationSec),
+      onSaveManualReplay: (durationSec, area) => appCore.saveManualReplay(durationSec, area || null),
       onExit: async () => {
         log('Остановка (выход из трея)...')
         try {

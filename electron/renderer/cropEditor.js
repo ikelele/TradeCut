@@ -25,6 +25,10 @@ const MIN_KEPT_SEC = 0.5
 const CLICK_SLOP_PX = 3
 const STEP_SEC = 0.1
 const BIG_STEP_SEC = 1
+// Сколько ждать после перемотки, прежде чем просить новый кадр у ffmpeg.
+// Кадр достаётся около секунды, и просить его на каждое движение мыши по
+// дорожке бессмысленно — нужен тот, на котором остановились.
+const STILL_DELAY_MS = 180
 
 // 74.5 -> "1:14.5"; секунды с десятой долей, потому что обрезка обычно
 // измеряется секундами, а не минутами.
@@ -39,6 +43,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   const frameEl = document.getElementById('frame')
   const stage = document.getElementById('stage')
   const video = document.getElementById('video')
+  const stillEl = document.getElementById('still')
   const box = document.getElementById('box')
   const emptyEl = document.getElementById('empty')
   const timeline = document.getElementById('timeline')
@@ -63,6 +68,17 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   let keepTo = 0
   // Менялся ли диапазон с прошлого воспроизведения — см. togglePlay
   let rangeChanged = false
+
+  // Запасной путь: окно не может показать это видео (HEVC — встроенный
+  // браузер раскодирует его только видеокартой, а окнам она отключена). Тогда
+  // кадр достаёт ffmpeg, и время живёт здесь, а не в элементе видео.
+  // Перематывать, резать по времени и выбирать область можно, проигрывать —
+  // нет.
+  let stillMode = false
+  let stillTime = 0
+  let stillDuration = 0
+  let stillRequest = 0
+  let stillTimer = null
 
   function setStatus(text, kind) {
     statusEl.className = kind ? `status ${kind}` : 'status'
@@ -208,7 +224,37 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   // ── Дорожка: две ручки задают, что оставить ─────────────────────────────
 
   function duration() {
+    if (stillMode) return stillDuration
     return Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0
+  }
+
+  // Текущий момент — у видео или у запасного пути
+  function now() {
+    return stillMode ? stillTime : (video.currentTime || 0)
+  }
+
+  function seek(time) {
+    const target = Math.max(0, Math.min(Number(time) || 0, duration()))
+    if (!stillMode) {
+      video.currentTime = target
+      return
+    }
+    stillTime = target
+    drawTimeline()
+    clearTimeout(stillTimer)
+    stillTimer = setTimeout(refreshStill, STILL_DELAY_MS)
+  }
+
+  async function refreshStill() {
+    if (!stillMode || !clipPath) return
+    const request = ++stillRequest
+    const forPath = clipPath
+    try {
+      const frame = await window.api.getStillFrame(forPath, stillTime)
+      if (request === stillRequest && forPath === clipPath) stillEl.src = frame.dataUri
+    } catch {
+      // Кадр не достался — остаётся прежний; дорожка и обрезка работают и так
+    }
   }
 
   function percentOf(seconds) {
@@ -224,9 +270,9 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
     rangeEl.style.width = `${Math.max(0, endPercent - startPercent)}%`
     timeline.querySelector('[data-trim="start"]').style.left = `${startPercent}%`
     timeline.querySelector('[data-trim="end"]').style.left = `${endPercent}%`
-    playheadEl.style.left = `${percentOf(video.currentTime || 0)}%`
+    playheadEl.style.left = `${percentOf(now())}%`
 
-    timeEl.textContent = total ? `${formatTime(video.currentTime || 0)} / ${formatTime(total)}` : ''
+    timeEl.textContent = total ? `${formatTime(now())} / ${formatTime(total)}` : ''
 
     const kept = Math.max(0, keepTo - keepFrom)
     // Подпись нужна, только когда что-то действительно отрезано: иначе она
@@ -246,7 +292,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
     // начала. Иначе получалось непредсказуемо: то с начала выделения, то с
     // середины, смотря где до этого стоял курсор.
     if (`${keepFrom},${keepTo}` !== before) rangeChanged = true
-    if (seekTo != null) video.currentTime = Math.max(0, Math.min(seekTo, total))
+    if (seekTo != null) seek(seekTo)
     drawTimeline()
   }
 
@@ -279,7 +325,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   timeline.addEventListener('pointerdown', (event) => {
     if (event.target.dataset.trim || event.target === rangeEl) return
     if (!duration()) return
-    video.currentTime = timeAtClientX(event.clientX)
+    seek(timeAtClientX(event.clientX))
     drawTimeline()
   })
 
@@ -308,7 +354,7 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
       // Не сдвинули — значит это был щелчок, и человек хотел перемотку.
       // Без этого выделение, занимающее всю дорожку, перекрыло бы её.
       if (!moved) {
-        video.currentTime = timeAtClientX(upEvent.clientX)
+        seek(timeAtClientX(upEvent.clientX))
         drawTimeline()
       }
     }
@@ -343,6 +389,10 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
 
   function togglePlay() {
     if (!duration()) return
+    if (stillMode) {
+      setStatus('Проигрывать этот клип окно не умеет: он в HEVC. Перематывай по дорожке — кадр подгрузится, когда отпустишь.')
+      return
+    }
     if (!video.paused) return video.pause()
 
     // С начала выделения — всегда после его правки, и всегда когда курсор
@@ -380,10 +430,10 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
   // ── Кнопки под дорожкой ─────────────────────────────────────────────────
 
   document.getElementById('mark-start').addEventListener('click', () => {
-    setKeepRange(video.currentTime, keepTo)
+    setKeepRange(now(), keepTo)
   })
   document.getElementById('mark-end').addEventListener('click', () => {
-    setKeepRange(keepFrom, video.currentTime)
+    setKeepRange(keepFrom, now())
   })
   document.getElementById('trim-reset').addEventListener('click', () => {
     setKeepRange(0, duration(), { seekTo: 0 })
@@ -402,15 +452,70 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
 
     const step = event.shiftKey ? BIG_STEP_SEC : STEP_SEC
     if (event.code === 'Space') { event.preventDefault(); togglePlay() }
-    else if (event.key === '[') setKeepRange(video.currentTime, keepTo)
-    else if (event.key === ']') setKeepRange(keepFrom, video.currentTime)
-    else if (event.key === 'ArrowLeft') { event.preventDefault(); video.currentTime = Math.max(0, video.currentTime - step) }
-    else if (event.key === 'ArrowRight') { event.preventDefault(); video.currentTime = Math.min(duration(), video.currentTime + step) }
+    else if (event.key === '[') setKeepRange(now(), keepTo)
+    else if (event.key === ']') setKeepRange(keepFrom, now())
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); seek(now() - step) }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); seek(now() + step) }
   })
 
   // ── Открытие файла ──────────────────────────────────────────────────────
 
+  // Переход на запасной путь. Сигнал — видео прочиталось, а картинки нет:
+  // у HEVC без видеокарты встроенный браузер находит звуковую дорожку, узнаёт
+  // длительность, но ширина и высота кадра остаются нулями. Раньше из этого
+  // получалась рамка «1x1 из 0x0» на чёрном поле.
+  async function enterStillMode() {
+    if (stillMode || !clipPath) return
+    const request = ++stillRequest
+    const forPath = clipPath
+    let frame
+    try {
+      frame = await window.api.getStillFrame(forPath, 1)
+    } catch {
+      if (request !== stillRequest || forPath !== clipPath) return
+      showUnplayable()
+      return
+    }
+    if (request !== stillRequest || forPath !== clipPath) return
+
+    stillMode = true
+    video.pause()
+    video.hidden = true
+    stillEl.hidden = false
+    stillEl.src = frame.dataUri
+    stillDuration = frame.duration
+    stillTime = frame.timeSec
+    playButton.disabled = true
+    soundButton.disabled = true
+
+    natural = { width: frame.width, height: frame.height }
+    stage.hidden = false
+    emptyEl.hidden = true
+    fit()
+    wholeFrame()
+    keepFrom = 0
+    keepTo = duration()
+    rangeChanged = false
+    drawTimeline()
+    loadFilmstrip()
+    setStatus('Этот клип в HEVC — проигрывать его окно не умеет, но перематывать, резать по времени и выбирать область можно. Кадр подгружается, когда отпускаешь дорожку.')
+    onReady()
+  }
+
+  function showUnplayable() {
+    natural = null
+    boxRect = null
+    stage.hidden = true
+    emptyEl.hidden = false
+    emptyEl.textContent = 'Это видео не показывается в окне. Обрезать его всё равно можно — выбери область кнопкой ниже.'
+    setStatus('Кадр не показывается: файл открылся, но показать его окно не умеет.', 'error')
+  }
+
   video.addEventListener('loadedmetadata', () => {
+    if (!(video.videoWidth > 0 && video.videoHeight > 0)) {
+      enterStillMode()
+      return
+    }
     natural = { width: video.videoWidth, height: video.videoHeight }
     stage.hidden = false
     emptyEl.hidden = true
@@ -429,18 +534,24 @@ function createCropEditor({ onRectChange = () => {}, onReady = () => {} } = {}) 
     onReady()
   })
 
+  // Видео не открылось вовсе — возможно, его всё равно прочитает ffmpeg
   video.addEventListener('error', () => {
-    natural = null
-    boxRect = null
-    stage.hidden = true
-    emptyEl.hidden = false
-    emptyEl.textContent = 'Это видео не показывается в окне. Обрезать его всё равно можно — выбери область кнопкой ниже.'
-    setStatus('Кадр не показывается: файл открылся, но проигрывать его окно не умеет.', 'error')
+    if (stillMode) return
+    enterStillMode()
   })
 
   return {
     open(filePath) {
       clipPath = filePath
+      // Запасной путь относился к прежнему файлу
+      stillMode = false
+      stillRequest++
+      clearTimeout(stillTimer)
+      stillEl.hidden = true
+      stillEl.removeAttribute('src')
+      video.hidden = false
+      playButton.disabled = false
+      soundButton.disabled = false
       // Кадры на дорожке относятся к прежнему файлу — убираем сразу, не
       // дожидаясь новых: иначе несколько секунд они показывали бы не то.
       stripRequest++
