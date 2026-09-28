@@ -1,4 +1,6 @@
 const fs = require('fs')
+const os = require('os')
+const { execFile } = require('child_process')
 
 // Где брать ffmpeg и ffprobe.
 //
@@ -54,6 +56,7 @@ function setFfmpegTools({ ffmpeg, ffprobe } = {}) {
     ffmpeg: fileExists(ffmpeg) ? ffmpeg : undefined,
     ffprobe: fileExists(ffprobe) ? ffprobe : undefined
   }
+  nvencCheck = null // другой ffmpeg — ответ про видеокарту надо узнать заново
 }
 
 function resolveTool(name) {
@@ -71,4 +74,57 @@ function describeTools() {
   return { ffmpeg: getFfmpegPath(), ffprobe: getFfprobePath() }
 }
 
-module.exports = { setFfmpegTools, getFfmpegPath, getFfprobePath, describeTools }
+// Фоновой работе ffmpeg — приоритет ниже обычного.
+//
+// Обрезка и разбор кадров идут сами, пока человек торгует: рядом открыт
+// терминал и пишет OBS. С обычным приоритетом ffmpeg делил с ними процессор на
+// равных — обрезка длинной сделки держала его наполовину занятым больше минуты,
+// и пользователь снял её руками. С пониженным он берёт только то, что остальным
+// не нужно: терминал и запись идут первыми.
+//
+// То, чего человек ждёт глазами (кадр в редакторе, «Найти границы»), сюда не
+// относится — там важнее скорость.
+function lowerPriority(child) {
+  if (!child || !child.pid) return
+  try {
+    os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL)
+  } catch {
+    // Процесс мог уже завершиться — тогда и понижать нечего. Любая другая
+    // причина тоже не повод ронять работу: отработает с обычным приоритетом.
+  }
+}
+
+// Может ли эта машина кодировать H.264 видеокартой NVIDIA (NVENC).
+//
+// Кодировщик в сборке ffmpeg есть всегда, а работает только при видеокарте
+// NVIDIA с драйвером. Узнать это можно одним способом — попробовать: кодируем
+// пару кадров чёрного экрана. «Да» помнится до конца работы программы.
+//
+// «Нет» — только несколько минут. Программа стартует вместе с Windows, и
+// драйвер видеокарты в этот момент бывает ещё не готов; запомни мы такой ответ
+// навсегда, процессор кодировал бы весь день — ровно то, от чего уходили.
+const NVENC_RECHECK_MS = 5 * 60 * 1000
+let nvencCheck = null
+
+function hasNvenc() {
+  if (!nvencCheck) {
+    const check = new Promise((resolve) => {
+      execFile(getFfmpegPath(), [
+        '-v', 'error',
+        '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2',
+        '-c:v', 'h264_nvenc',
+        '-f', 'null', '-'
+      ], { timeout: 15000 }, (error) => resolve(!error))
+    })
+    check.then((ok) => {
+      if (ok) return
+      setTimeout(() => {
+        if (nvencCheck === check) nvencCheck = null
+      }, NVENC_RECHECK_MS).unref()
+    })
+    nvencCheck = check
+  }
+  return nvencCheck
+}
+
+module.exports = { setFfmpegTools, getFfmpegPath, getFfprobePath, describeTools, lowerPriority, hasNvenc }

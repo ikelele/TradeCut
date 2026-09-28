@@ -618,6 +618,7 @@ function main() {
     log(`Файлы логов приложения лежат в: ${logger.getLogDir()}`)
     setWindowsLogger(log)
     require('../src/clipper').setClipperLogger(log)
+    require('../src/stakanCrop').setStakanCropLogger(log)
     autostart.migrateLegacyAutostart(log)
     autostart.repointAutostartIfMoved(APP_USER_MODEL_ID, log)
     logRenderingDiagnostics()

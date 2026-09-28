@@ -269,6 +269,8 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
 
   const size = await probeVideoSize(clipPath)
   const duration = await probeDurationSeconds(clipPath)
+  // Разбор идёт сам, никто его не ждёт — кадры читаются в фоне (см. grabFrameRgba)
+  const frameOptions = { ...size, background: true }
 
   // Кадр до входа: с ним сравниваем, чтобы отличить загоревшийся маркер от
   // того, что в панели горело всегда.
@@ -276,7 +278,7 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   let earlyFrame = null
   if (duration >= MIN_BASELINE_CLIP_SEC) {
     try {
-      const early = await grabFrameRgba(clipPath, BASELINE_AT_SEC, size)
+      const early = await grabFrameRgba(clipPath, BASELINE_AT_SEC, frameOptions)
       earlyFrame = early
       baseline = new Map()
       for (const area of areas) {
@@ -295,7 +297,7 @@ async function detectTradeArea(clipPath, areas, log = () => {}) {
   for (const at of SAMPLE_POINTS) {
     const timeSec = duration * at
     try {
-      const frame = await grabFrameRgba(clipPath, timeSec, size)
+      const frame = await grabFrameRgba(clipPath, timeSec, frameOptions)
       results.push(detectAreaInFrame(frame, areas, baseline))
       backup.push(detectAreaByStandOut(frame, areas, earlyFrame))
     } catch (error) {

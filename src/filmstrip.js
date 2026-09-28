@@ -1,5 +1,5 @@
 const { execFile } = require('child_process')
-const { getFfmpegPath } = require('./ffmpegTools')
+const { getFfmpegPath, lowerPriority } = require('./ffmpegTools')
 
 // Полоска кадров для дорожки обрезки: по ней видно, где в клипе что, не
 // проигрывая его. Это первое, чего не хватало нашей дорожке по сравнению с
@@ -26,12 +26,18 @@ const THUMB_HEIGHT = 44
 const AT_ONCE = 4
 const MAX_THUMB_BYTES = 2 * 1024 * 1024
 
+// Полоска — украшение, её никто не ждёт: запись читает видеокарта, ffmpeg идёт
+// с пониженным приоритетом. На записи двух мониторов (HEVC 6880x1440) процессор
+// тратил на каждую миниатюру 4.5 секунды — дюжина разом загружала его целиком.
+// Видеокартой — 1.5 секунды процессора, а полоска появляется на секунду-другую
+// позже.
 function grabThumb(filePath, timeSec, height) {
   return new Promise((resolve) => {
     // -ss ДО -i: перемотка по ключевым кадрам. Иначе ffmpeg декодирует всё с
     // начала, и смысл отдельных перемоток пропадает.
     const child = execFile(getFfmpegPath(), [
       '-v', 'error',
+      '-hwaccel', 'auto',
       '-ss', String(Math.max(0, timeSec)),
       '-i', filePath,
       '-frames:v', '1',
@@ -47,6 +53,7 @@ function grabThumb(filePath, timeSec, height) {
       resolve(`data:image/jpeg;base64,${stdout.toString('base64')}`)
     })
     child.on('error', () => resolve(null))
+    lowerPriority(child)
   })
 }
 

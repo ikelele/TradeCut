@@ -1,5 +1,5 @@
 const { execFile } = require('child_process')
-const { getFfmpegPath, getFfprobePath } = require('./ffmpegTools')
+const { getFfmpegPath, getFfprobePath, lowerPriority } = require('./ffmpegTools')
 
 // Достаёт один кадр видео сырыми пикселями (RGBA), без промежуточного файла.
 //
@@ -10,7 +10,12 @@ const { getFfmpegPath, getFfprobePath } = require('./ffmpegTools')
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 
-function grabFrameRgba(filePath, timeSec, { width, height }) {
+// background — кадр нужен не человеку, а разбору сделки, который идёт сам.
+// Тогда запись читает видеокарта и с пониженным приоритетом: на записи двух
+// мониторов (HEVC 6880x1440) это 1.5 секунды процессора на кадр вместо 4.8, а
+// кадров на сделку четыре. Зато видеокарта на полсекунды медленнее, поэтому
+// там, где человек ждёт ответа («Найти границы»), читает процессор.
+function grabFrameRgba(filePath, timeSec, { width, height, background = false }) {
   const expectedBytes = width * height * 4
   if (!(expectedBytes > 0) || expectedBytes > MAX_FRAME_BYTES) {
     return Promise.reject(new Error(`Неподходящий размер кадра: ${width}x${height}`))
@@ -21,9 +26,15 @@ function grabFrameRgba(filePath, timeSec, { width, height }) {
     // будет декодировать всё с начала.
     const child = execFile(getFfmpegPath(), [
       '-v', 'error',
+      ...(background ? ['-hwaccel', 'auto'] : []),
       '-ss', String(Math.max(0, timeSec || 0)),
       '-i', filePath,
       '-frames:v', '1',
+      // Видеокарта отдаёт кадр в NV12, а цвет из него пересчитывается иначе,
+      // чем из yuv420p, который даёт процессор: 40% байт кадра расходились до
+      // 48 уровней. Пороги разбора сделки подобраны на кадрах процессора,
+      // поэтому сперва приводим к yuv420p — тогда кадр совпадает до байта.
+      ...(background ? ['-vf', 'format=yuv420p'] : []),
       '-pix_fmt', 'rgba',
       '-f', 'rawvideo',
       'pipe:1'
@@ -35,6 +46,7 @@ function grabFrameRgba(filePath, timeSec, { width, height }) {
       resolve({ data: stdout, width, height })
     })
     child.on('error', reject)
+    if (background) lowerPriority(child)
   })
 }
 

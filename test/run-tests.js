@@ -1692,6 +1692,90 @@ async function testCropClipWithoutStakanKeepsFullFrame() {
   console.log('[OK] testCropClipWithoutStakanKeepsFullFrame')
 }
 
+// Видеокарта взялась кодировать, но не справилась — занята или капризничает
+// на размере. Клип всё равно должен получиться, процессором, а в журнале —
+// короткая причина. Не вышло и процессором — недописанный файл не должен
+// остаться в папке с клипами.
+//
+// Запуск ffmpeg подменяется: проверка видеокарты «проходит», а кодирование ею
+// падает. Так тест одинаков на любой машине, с NVIDIA и без.
+async function testCropFallsBackToCpuWhenGpuFails() {
+  const childProcess = require('child_process')
+  const { promisify } = require('util')
+  const realExecFile = childProcess.execFile
+  const realAsync = realExecFile[promisify.custom]
+  const ours = ['../src/stakanCrop', '../src/ffmpegTools'].map((name) => require.resolve(name))
+  const saved = ours.map((file) => require.cache[file])
+
+  let failCpuToo = false
+  let lastOutput = null
+  const encoders = []
+  function fail(reason, outputPath) {
+    // Как настоящий ffmpeg: файл успел появиться, а потом всё упало
+    lastOutput = outputPath
+    fs.writeFileSync(outputPath, 'недописано')
+    const error = new Error('Command failed: ffmpeg')
+    error.stderr = `${reason}\nError while opening encoder`
+    const running = Promise.reject(error)
+    running.child = {}
+    return running
+  }
+  function fakeExecFile(file, args, ...rest) {
+    if (args.includes('lavfi')) { // проверка видеокарты — «есть»
+      const callback = rest.find((item) => typeof item === 'function')
+      setImmediate(() => callback(null, '', ''))
+      return { on() {} }
+    }
+    return realExecFile.call(this, file, args, ...rest)
+  }
+  fakeExecFile[promisify.custom] = (file, args, ...rest) => {
+    const codecAt = args.indexOf('-c:v')
+    if (codecAt < 0) return realAsync(file, args, ...rest)
+    const codec = args[codecAt + 1]
+    encoders.push(codec)
+    if (codec === 'h264_nvenc') return fail('[h264_nvenc @ 0000] OpenEncodeSessionEx failed: out of memory (10)', args[args.length - 1])
+    if (failCpuToo) return fail('[libx264 @ 0000] No space left on device', args[args.length - 1])
+    return realAsync(file, args, ...rest)
+  }
+
+  childProcess.execFile = fakeExecFile
+  for (const file of ours) delete require.cache[file]
+  try {
+    const stakanCrop = require('../src/stakanCrop')
+    const logged = []
+    stakanCrop.setStakanCropLogger((message) => logged.push(message))
+    const replayPath = path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv')
+    const outputDir = path.join(__dirname, '..', 'test-assets', 'clips-stakan-ci')
+    // Не уже 145 точек — иначе видеокарту и пробовать не станут
+    const cropRect = { x: 0, y: 0, width: 160, height: 240 }
+
+    const outputPath = await stakanCrop.cropClipToStakan(replayPath, null, outputDir, { cropRect, mute: true })
+    assert.deepStrictEqual(encoders, ['h264_nvenc', 'libx264'], 'после отказа видеокарты кодировать должен процессор')
+    const stream = execFileSync('ffprobe', [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=codec_name,width,height', '-of', 'csv=p=0', outputPath
+    ]).toString().trim()
+    assert.strictEqual(stream, 'h264,160,240', `клип должен получиться целым, получено ${stream}`)
+    assert.ok(logged.some((line) => line.includes('OpenEncodeSessionEx failed') && !line.includes('Error while opening')),
+      `в журнал — первая строка причины, без хвоста: ${logged.join(' | ')}`)
+    fs.unlinkSync(outputPath)
+
+    failCpuToo = true
+    encoders.length = 0
+    await assert.rejects(stakanCrop.cropClipToStakan(replayPath, null, outputDir, { cropRect, mute: true }), /Command failed/)
+    assert.deepStrictEqual(encoders, ['h264_nvenc', 'libx264'])
+    assert.ok(lastOutput && !fs.existsSync(lastOutput), `недописанный файл не должен остаться: ${lastOutput}`)
+  } finally {
+    childProcess.execFile = realExecFile
+    ours.forEach((file, index) => {
+      if (saved[index]) require.cache[file] = saved[index]
+      else delete require.cache[file]
+    })
+  }
+
+  console.log('[OK] testCropFallsBackToCpuWhenGpuFails')
+}
+
 // Три "сделки" подряд по одному символу, весь диапазон (вход первой — выход
 // последней) укладывается в 10-секундный буфер fake-replay.mkv — объединённый
 // клип должен быть создан и покрывать весь диапазон.
@@ -1833,6 +1917,7 @@ async function main() {
   await testCropClipToStakanSelectsTrack2()
   await testCropClipWithoutStakanKeepsFullFrame()
   await testCropClipMuteDropsAudio()
+  await testCropFallsBackToCpuWhenGpuFails()
   await testMergedPartsDeletedByDefault()
   testDetectAreaInFrame()
   testDetectAreaIgnoresAlwaysColoredPanel()

@@ -5,9 +5,65 @@ const { promisify } = require('util')
 const { buildDailyOutputDir, probeDurationSeconds, probeAudioStreamCount, probeVideoSize } = require('./clipper')
 const { resolveCropRect, sanitizePresetName } = require('./cropRect')
 const { resolveMediaPath } = require('./appPaths')
-const { getFfmpegPath, getFfprobePath } = require('./ffmpegTools')
+const { getFfmpegPath, getFfprobePath, lowerPriority, hasNvenc } = require('./ffmpegTools')
 
 const execFileAsync = promisify(execFile)
+
+let log = () => {}
+function setStakanCropLogger(logger) {
+  log = logger || (() => {})
+}
+
+// Чем кодировать вырезанное.
+//
+// Раньше всегда процессором (x264), и он же читал запись. На кадре двух
+// мониторов (6880x1440, HEVC) это 63 секунды процессорного времени на минуту
+// клипа: обрезка сделки на семь минут шла больше минуты и держала процессор
+// наполовину занятым. С видеокартой NVIDIA — 13 секунд процессора. Сама
+// обрезка при этом идёт в полтора раза дольше (13 секунд на минуту клипа
+// вместо 9), но её никто не ждёт. Качество не хуже: сходство с исходником
+// 0.9987 против 0.9978 у x264, файл примерно на четверть больше.
+//
+// Читает запись тоже видеокарта, любой марки (-hwaccel auto), если она знает
+// этот кодек. Не знает — ffmpeg сам и молча читает процессором.
+const X264_ARGS = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18']
+const NVENC_ARGS = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0']
+
+// Пределы кодировщика NVIDIA для H.264. Кадр шире 4096 он не берёт вовсе — а
+// это кадр двух мониторов, если его только ускоряют, не вырезая область; уже
+// 145 точек тоже. Такое сразу отдаём процессору, не тратя попытку.
+function fitsNvenc(size) {
+  return Boolean(size) && size.width >= 145 && size.height >= 49 && size.width <= 4096 && size.height <= 4096
+}
+
+// Чем кодируется обрезка — в журнал, но только когда это меняется: при жалобе
+// «грузит процессор» это первое, что надо знать.
+let reportedNvenc = null
+
+async function checkNvenc() {
+  const available = await hasNvenc()
+  if (available !== reportedNvenc) {
+    reportedNvenc = available
+    log(available
+      ? 'Обрезку кодирует видеокарта NVIDIA'
+      : 'Видеокарты NVIDIA для кодирования нет — обрезку кодирует процессор')
+  }
+  return available
+}
+
+async function runFfmpegInBackground(args) {
+  const running = execFileAsync(getFfmpegPath(), args)
+  lowerPriority(running.child)
+  await running
+}
+
+// Для журнала — первая строка ответа ffmpeg: в ней причина. В самой ошибке
+// ещё и командная строка на полэкрана.
+function shortError(error) {
+  const stderr = String((error && error.stderr) || '').trim()
+  const text = stderr || String((error && error.message) || error)
+  return text.split(/\r?\n/).find((line) => line.trim()) || text
+}
 
 // Сколько равных частей по умолчанию, если пользователь ещё не настроил свои
 // области. Размер экрана здесь НЕ задаётся намеренно: он берётся из самой
@@ -125,6 +181,11 @@ async function cropClipToStakan(clipPath, stakanIndex, outputBaseDir, options = 
     }
   }
 
+  // Размер того, что уйдёт в кодировщик: от него зависит, возьмётся ли за него
+  // видеокарта. Не узнали — кодирует процессор, он берёт любой.
+  const encodedSize = cropRect || await probeVideoSize(clipPath).catch(() => null)
+  const useNvenc = fitsNvenc(encodedSize) && await checkNvenc()
+
   const stat = await fsp.stat(clipPath)
   const dailyDir = buildDailyOutputDir(outputBaseDir, stat.mtimeMs)
   await fsp.mkdir(dailyDir, { recursive: true })
@@ -147,7 +208,7 @@ async function cropClipToStakan(clipPath, stakanIndex, outputBaseDir, options = 
   const chosenName = sanitizeOutputFileName(options.outputFileName) || `${base} ${suffix}.mp4`
   const outputPath = await ensureUniquePath(dailyDir, chosenName)
 
-  const ffmpegArgs = ['-y']
+  const ffmpegArgs = ['-y', '-v', 'error', '-hwaccel', 'auto']
 
   let durationSec = 0
   if (trimEnd > 0) {
@@ -198,22 +259,37 @@ async function cropClipToStakan(clipPath, stakanIndex, outputBaseDir, options = 
     ffmpegArgs.push('-af', af)
   }
 
-  ffmpegArgs.push(
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '18'
-  )
+  // 8 бит 4:2:0 — то, что играет везде, от телефона до Telegram. Запись в 10
+  // бит иначе дала бы клип, который половина плееров не откроет.
+  const outputArgs = ['-pix_fmt', 'yuv420p']
 
   // Всегда перекодируем аудио в aac, потому что при использовании -ss перед -i
   // и стрим-копировании (-c:a copy) часто ломаются таймстемпы и пропадает звук.
-  if (!mute) ffmpegArgs.push('-c:a', 'aac')
+  if (!mute) outputArgs.push('-c:a', 'aac')
 
-  ffmpegArgs.push(outputPath)
+  outputArgs.push(outputPath)
 
-  await execFileAsync(getFfmpegPath(), ffmpegArgs)
+  if (useNvenc) {
+    try {
+      await runFfmpegInBackground([...ffmpegArgs, ...NVENC_ARGS, ...outputArgs])
+      return outputPath
+    } catch (error) {
+      // Видеокарта бывает занята или капризничает на странном размере — это не
+      // повод терять клип. Недописанный файл перезапишется ниже (-y).
+      log(`Видеокарта не закодировала ${path.basename(outputPath)} (${shortError(error)}) — кодирую процессором`)
+    }
+  }
+
+  try {
+    await runFfmpegInBackground([...ffmpegArgs, ...X264_ARGS, ...outputArgs])
+  } catch (error) {
+    // Битый недописанный файл в папке с клипами только сбивает с толку
+    await fsp.unlink(outputPath).catch(() => {})
+    throw error
+  }
 
   return outputPath
 }
 
-module.exports = { getStakanBounds, cropClipToStakan, buildAtempoFilter, sanitizeOutputFileName }
+module.exports = { getStakanBounds, cropClipToStakan, buildAtempoFilter, sanitizeOutputFileName, setStakanCropLogger }
 
