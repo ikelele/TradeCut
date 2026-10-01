@@ -209,8 +209,21 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
         // Сперва пробуем понять по самому кадру, где была сделка. Не вышло —
         // берём заданную заранее область; нет и её — не режем вовсе. Молча
         // вырезать наугад нельзя: это была бы чужая монета под видом твоей.
-        let areaName = detect ? await detectTradeArea(entry.clipPath, areas, log) : null
-        if (!areaName) areaName = fallbackName
+        //
+        // Определению нужно знать, где в клипе вход и сколько шла сделка:
+        // плашка позиции горит ровно тогда, и у секундной сделки — секунду.
+        const tradeSec = Math.max(0, (entry.trade.exitTimeMs - entry.trade.entryTimeMs) / 1000)
+        const detected = detect
+          ? await detectTradeArea(entry.clipPath, areas, log, { entrySec: config.clip.paddingBeforeSec, tradeSec })
+          : null
+        let areaName = detected ? detected.name : null
+        // Уверенность нужна, чтобы удалить полный клип. Заданная заранее
+        // область — выбор самого человека, в ней сомневаться нечего.
+        let sure = Boolean(detected && detected.sure)
+        if (!areaName) {
+          areaName = fallbackName
+          sure = true
+        }
         if (!areaName) {
           log('Область не определена и запасная не задана — клип остаётся целым')
           return
@@ -228,9 +241,16 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
         })
         log(`Область «${areaName}» вырезана автоматически: ${outputPath}`)
 
-        if (!config.clip.autoCropDeleteFull) {
+        if (!config.clip.autoCropDeleteFull || !sure) {
           // Полный клип остаётся; помним про вырезанный, чтобы он не пережил
           // исходник, если тот удалят при объединении серии.
+          //
+          // Остаётся он и тогда, когда область выбрал запасной признак: 1
+          // октября тот вырезал соседний стакан, а полный клип удалился, и
+          // сделку было уже не вернуть.
+          if (config.clip.autoCropDeleteFull) {
+            log(`Полный клип оставлен: область «${areaName}» выбрана без полной уверенности — если не та, вырежи свою из него`)
+          }
           entry.autoCropPath = outputPath
         } else {
           const fullClipPath = entry.clipPath

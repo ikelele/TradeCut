@@ -1123,113 +1123,241 @@ async function testMergedPartsDeletedByDefault() {
 
 // Определение области, в которой шла сделка.
 //
-// Кадр рисуем сами: серый интерфейс во всю площадь и цветная полоса внизу
-// одной из колонок — ровно так выглядит панель с открытой позицией.
-function makeFrame(width, height, vividColumns) {
-  const data = new Uint8Array(width * height * 4)
-  // Серый фон: каналы близки друг к другу, насыщенным такое не считается
-  for (let i = 0; i < width * height; i++) {
-    data[i * 4] = 60
-    data[i * 4 + 1] = 62
-    data[i * 4 + 2] = 66
-    data[i * 4 + 3] = 255
-  }
-
-  const columnWidth = Math.floor(width / 6)
-  for (const { index, fromRatio } of vividColumns) {
-    const stripTop = Math.round(height * fromRatio)
-    for (let y = stripTop; y < height; y++) {
-      for (let x = index * columnWidth; x < (index + 1) * columnWidth; x++) {
-        const i = (y * width + x) * 4
-        data[i] = 200 // насыщенно-красная плашка
-        data[i + 1] = 50
-        data[i + 2] = 50
+// Плашку позиции ищем во времени: нижняя полоса каждой области читается десять
+// раз в секунду, и нужно найти, где она ЗАГОРЕЛАСЬ около входа и горела
+// примерно столько, сколько шла сделка. Здесь — сама логика выбора на
+// придуманных замерах: доля цветного в полосе каждой области на каждом кадре.
+//
+// lit — [{ area, from, to, share }]: в какой области, когда и насколько горело.
+function makeScan(names, durationSec, lit) {
+  const samples = []
+  for (let k = 0; k / 10 < durationSec; k++) {
+    const timeSec = Number((k / 10).toFixed(1))
+    const scores = names.map((_, index) => {
+      let score = 0.02 // серый интерфейс: немного цветного есть всегда
+      for (const item of lit) {
+        if (item.area === index && timeSec >= item.from && timeSec <= item.to) score += item.share ?? 0.3
       }
-    }
+      return score
+    })
+    samples.push({ timeSec, scores })
   }
-  return { width, height, data }
+  return samples
 }
 
-function makeAreas(width, height) {
-  const columnWidth = Math.floor(width / 6)
-  return Array.from({ length: 6 }, (_, k) => ({
-    name: `Стакан ${k + 1}`,
-    x: k * columnWidth,
-    y: 0,
-    width: columnWidth,
-    height,
-    sourceWidth: width,
-    sourceHeight: height
+function testPickAreaFromScan() {
+  const { pickAreaFromScan } = require('../src/tradeAreaDetect')
+  const names = ['Стакан 1', 'Стакан 2', 'Стакан 3', 'Стакан 4']
+  const hint = (tradeSec, scanEndSec) => ({ entrySec: 5, tradeSec, scanEndSec })
+
+  // Сделка на 1.2 секунды. Вход ждали на 5-й секунде, а плашка загорелась на
+  // 6.2: время сделки — по часам биржи, запись — по часам компьютера. Так было
+  // 1 октября с US: три кадра на 30/50/70% клипа легли до входа.
+  const late = pickAreaFromScan(makeScan(names, 8.2, [{ area: 2, from: 6.2, to: 7.4 }]), names, hint(1.2, 8.2))
+  assert.ok(late.winner, 'плашку, загоревшуюся позже ожидаемого, надо находить')
+  assert.strictEqual(late.winner.best.name, 'Стакан 3')
+
+  // Одна монета в двух панелях: плашки загораются и гаснут разом. Это одна
+  // позиция, а не две, — годится любая панель, и всегда одна и та же.
+  const twice = pickAreaFromScan(makeScan(names, 8.2, [
+    { area: 3, from: 6.2, to: 7.4, share: 0.4 },
+    { area: 1, from: 6.2, to: 7.4, share: 0.3 }
+  ]), names, hint(1.2, 8.2))
+  assert.ok(twice.winner, 'одна позиция в двух панелях — не повод молчать')
+  assert.strictEqual(twice.winner.best.name, 'Стакан 2', 'из одновременных панелей — первая по порядку')
+  assert.strictEqual(twice.winner.runs.length, 2)
+
+  // Панель, где цветное горит всегда, — мебель, а не позиция: горела ещё до
+  // входа. Побеждает та, что загорелась, даже если цвета в ней меньше.
+  const furniture = pickAreaFromScan(makeScan(names, 8.2, [
+    { area: 0, from: 0, to: 8.2, share: 0.6 },
+    { area: 3, from: 6.0, to: 7.2, share: 0.2 }
+  ]), names, hint(1.2, 8.2))
+  assert.strictEqual(furniture.winner && furniture.winner.best.name, 'Стакан 4')
+
+  // Две разные позиции в разное время. Своя горит столько, сколько шла
+  // сделка; чужая открылась позже и горит до конца клипа.
+  const other = pickAreaFromScan(makeScan(names, 10, [
+    { area: 1, from: 6.2, to: 7.4 },
+    { area: 2, from: 7.0, to: 10 }
+  ]), names, hint(1.2, 10))
+  assert.strictEqual(other.winner && other.winner.best.name, 'Стакан 2')
+
+  // Две разные позиции, и обе похожи на сделку, — честное «не знаю»: вырезать
+  // чужую монету хуже, чем не вырезать ничего.
+  const both = pickAreaFromScan(makeScan(names, 10, [
+    { area: 0, from: 5.5, to: 6.7 },
+    { area: 2, from: 6.5, to: 7.7 }
+  ]), names, hint(1.2, 10))
+  assert.strictEqual(both.winner, null)
+  assert.strictEqual(both.groups.length, 2)
+
+  // Длинную сделку читаем не целиком: плашка горит до конца прочитанного, и
+  // это не расхождение с длительностью.
+  const long = pickAreaFromScan(makeScan(names, 20.5, [{ area: 1, from: 6.1, to: 20.5 }]), names, hint(300, 20.5))
+  assert.strictEqual(long.winner && long.winner.best.name, 'Стакан 2')
+
+  // Ничего не загоралось — ответа нет; одна область — выбирать не из чего
+  assert.strictEqual(pickAreaFromScan(makeScan(names, 8.2, []), names, hint(1.2, 8.2)).winner, null)
+  const lone = ['Стакан 1']
+  assert.strictEqual(pickAreaFromScan(makeScan(lone, 8.2, [{ area: 0, from: 6, to: 7 }]), lone, hint(1.2, 8.2)).winner, null)
+
+  console.log('[OK] testPickAreaFromScan')
+}
+
+// То же на настоящем видео: полосу кадров читает ffmpeg, как в программе.
+// Клип как у секундной сделки — 5 секунд до входа, 2 после, — и плашка
+// загорается на 6.2, позже ожидаемого. Старый разбор смотрел кадры на 2.5,
+// 4.1 и 5.7 секунды и не видел её вовсе.
+async function testDetectTradeAreaFindsLatePlate() {
+  const os = require('os')
+  const { detectTradeArea } = require('../src/tradeAreaDetect')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-plate-'))
+  const plate = (x) => `drawbox=x=${x}:y=216:w=160:h=24:color=0xc83232:t=fill:enable='between(t,6.2,7.4)'`
+  const makeClip = (name, boxes) => {
+    const clip = path.join(dir, name)
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y',
+      '-f', 'lavfi', '-i', 'color=c=0x3c3e42:s=640x240:d=8.2:r=30',
+      '-vf', boxes.join(','),
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+      clip
+    ])
+    return clip
+  }
+  const areas = [0, 1, 2, 3].map((k) => ({
+    name: `Стакан ${k + 1}`, x: k * 160, y: 0, width: 160, height: 240, sourceWidth: 640, sourceHeight: 240
   }))
+  const hint = { entrySec: 5, tradeSec: 1.2 }
+
+  try {
+    const single = await detectTradeArea(makeClip('single.mp4', [plate(480)]), areas, () => {}, hint)
+    assert.deepStrictEqual(single, { name: 'Стакан 4', sure: true })
+
+    // Монета в двух панелях — одна позиция, режется первая из них
+    const twice = await detectTradeArea(makeClip('twice.mp4', [plate(160), plate(480)]), areas, () => {}, hint)
+    assert.deepStrictEqual(twice, { name: 'Стакан 2', sure: true })
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+
+  console.log('[OK] testDetectTradeAreaFindsLatePlate')
 }
 
-function testDetectAreaInFrame() {
-  const { detectAreaInFrame, pickAreaByVotes } = require('../src/tradeAreaDetect')
-  const width = 1200
-  const height = 600
-  const areas = makeAreas(width, height)
-
-  // Полоса в четвёртой колонке — её и должно найти, уверенно.
-  const one = detectAreaInFrame(makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }]), areas)
-  assert.strictEqual(one.name, 'Стакан 4')
-  assert.strictEqual(one.confident, true, `должно быть уверенно, а вышло ${JSON.stringify(one)}`)
-
-  // Две открытые позиции — две полосы. Выбирать между ними нельзя: тикер мы не
-  // читаем, а вырезать чужую монету под видом своей хуже, чем не вырезать.
-  const two = detectAreaInFrame(
-    makeFrame(width, height, [{ index: 1, fromRatio: 0.96 }, { index: 4, fromRatio: 0.96 }]),
-    areas
-  )
-  assert.strictEqual(two.confident, false, 'при двух одинаковых полосах уверенности быть не должно')
-
-  // Полос нет вовсе — тоже честное "не знаю", а не случайная колонка.
-  const none = detectAreaInFrame(makeFrame(width, height, []), areas)
-  assert.strictEqual(none.confident, false, 'без цветных полос уверенности быть не должно')
-
-  // Одна область — сравнивать не с чем, и "определение" было бы самообманом
-  assert.strictEqual(detectAreaInFrame(makeFrame(width, height, []), areas.slice(0, 1)), null)
-
-  console.log('[OK] testDetectAreaInFrame')
-}
-
-// Голосование по нескольким кадрам: один кадр мог попасть на моргание.
-// Постоянно цветной элемент панели не должен считаться маркером позиции.
+// Полный клип после автоматической обрезки удаляется, только когда область
+// определена уверенно. 1 октября запасной признак вырезал соседний стакан, а
+// полный клип удалился вслед, и сделку было уже не вернуть.
 //
-// Так программа и обрезала не тот стакан у стороннего пользователя: области он
-// разметил во всю высоту кадра, а внизу экрана у него отдельный ряд графиков.
-// Нижней полосой области оказались свечи, и самый цветной график выигрывал
-// уверенно — «Стакан 4, 5.0%» при нуле у остальных.
-//
-// Отличие маркера от мебели в том, что маркер ЗАГОРАЕТСЯ: в начале клипа
-// позиция ещё не открыта.
-function testDetectAreaIgnoresAlwaysColoredPanel() {
-  const { detectAreaInFrame, scoreArea } = require('../src/tradeAreaDetect')
-  const width = 1200
-  const height = 600
-  const areas = makeAreas(width, height)
+// Сделка проходит весь путь: строки в журнале терминала, сохранение буфера
+// (поддельный OBS), нарезка, обрезка. Подменено только определение области:
+// здесь нужен лишь его ответ, а сам разбор проверяют тесты выше.
+async function testAutoCropKeepsFullClipWhenUnsure() {
+  const os = require('os')
+  const { DEFAULT_CONFIG } = require('../src/config')
+  const detectPath = require.resolve('../src/tradeAreaDetect')
+  const appPath = require.resolve('../src/app')
+  const savedDetect = require.cache[detectPath]
+  const savedApp = require.cache[appPath]
 
-  // В четвёртой колонке цветная полоса есть ВСЕГДА — и до сделки тоже
-  const before = makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }])
-  const during = makeFrame(width, height, [{ index: 3, fromRatio: 0.96 }])
+  let answer = null
+  require.cache[detectPath] = {
+    id: detectPath, filename: detectPath, loaded: true,
+    exports: { detectTradeArea: async () => answer }
+  }
+  delete require.cache[appPath]
 
-  const baseline = new Map()
-  for (const area of areas) baseline.set(area.name, scoreArea(before, area))
+  const previousLocalAppData = process.env.LOCALAPPDATA
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-autocrop-'))
+  process.env.LOCALAPPDATA = tmpHome
+  const logsDir = path.join(tmpHome, 'Logs')
+  fs.mkdirSync(logsDir)
+  const logFile = path.join(logsDir, `log-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.clef`)
+  fs.writeFileSync(logFile, '')
 
-  const verdict = detectAreaInFrame(during, areas, baseline)
-  assert.strictEqual(verdict.confident, false,
-    `постоянно цветная панель не должна считаться сделкой: ${JSON.stringify(verdict)}`)
+  const source = path.join(__dirname, '..', 'test-assets', 'fake-replay.mkv')
+  let saves = 0
+  const fakeObs = () => ({
+    connect: async () => {},
+    disconnect: async () => {},
+    isReplayBufferActive: async () => true,
+    saveReplayBufferAndWaitForPath: async () => {
+      const copy = path.join(tmpHome, `obs-replay-${++saves}.mkv`)
+      fs.copyFileSync(source, copy)
+      const now = new Date()
+      fs.utimesSync(copy, now, now) // буфер кончается «сейчас», как у настоящего OBS
+      return copy
+    }
+  })
 
-  // А та, что загорелась, — должна, даже если цветного в ней меньше
-  const lit = makeFrame(width, height, [
-    { index: 3, fromRatio: 0.96 },
-    { index: 1, fromRatio: 0.96 }
-  ])
-  const second = detectAreaInFrame(lit, areas, baseline)
-  assert.strictEqual(second.name, 'Стакан 2',
-    `загоревшуюся полосу должно находить: ${JSON.stringify(second)}`)
-  assert.strictEqual(second.confident, true)
+  const messages = []
+  let appCore = null
 
-  console.log('[OK] testDetectAreaIgnoresAlwaysColoredPanel')
+  // Вход и выход — строками журнала Vataga, как их пишет терминал
+  const runTrade = async (positionId) => {
+    const line = (quantity, ms) => JSON.stringify({
+      '@t': new Date(ms).toISOString(), '@mt': 'Position changed.', Type: 'Trading', PositionID: positionId,
+      SymbolTitle: 'BinanceVataga/TESTUSDT', ExchangeType: 'BinanceVataga', IsClosed: quantity === 0,
+      PositionQuantity: quantity, TradeTime: new Date(ms).toISOString().slice(0, 23)
+    })
+    const now = Date.now()
+    const from = messages.length
+    fs.appendFileSync(logFile, `${line(100, now - 4000)}\n${line(0, now - 3000)}\n`)
+    const fresh = () => messages.slice(from)
+    await waitForCondition(
+      () => fresh().some((m) => m.startsWith('Полный клип удалён') || m.startsWith('Полный клип оставлен')),
+      `обрезка сделки ${positionId}`, 20000
+    ).catch((error) => {
+      throw new Error(`${error.message}. Журнал программы:\n  ${messages.join('\n  ')}`)
+    })
+    const clipPath = fresh().find((m) => m.startsWith('Клип готов: ')).slice('Клип готов: '.length)
+    const cropLine = fresh().find((m) => m.includes('вырезана автоматически: '))
+    return { clipPath, cropPath: cropLine.slice(cropLine.indexOf('вырезана автоматически: ') + 'вырезана автоматически: '.length) }
+  }
+
+  try {
+    const { createApp } = require('../src/app')
+    const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
+    config.terminal.type = 'vataga'
+    config.terminal.logsDirOverride = logsDir
+    config.polling.logPollIntervalMs = 50
+    config.clip.paddingBeforeSec = 2
+    config.clip.paddingAfterSec = 0
+    config.clip.outputDir = path.join(tmpHome, 'clips')
+    config.clip.stakanOutputDir = path.join(tmpHome, 'crops')
+    config.clip.mergeTradesEnabled = false
+    config.clip.autoCropDetect = true
+    config.clip.autoCropDeleteFull = true
+    config.clip.cropPresets = [
+      { name: 'Стакан 1', x: 0, y: 0, width: 160, height: 240, sourceWidth: 320, sourceHeight: 240 },
+      { name: 'Стакан 2', x: 160, y: 0, width: 160, height: 240, sourceWidth: 320, sourceHeight: 240 }
+    ]
+
+    appCore = createApp({ config, log: (message) => messages.push(message), obsClientFactory: fakeObs })
+    await appCore.start()
+    await waitForCondition(() => messages.some((m) => m.includes('Слежение начато')), 'начало слежения за журналом')
+
+    // Не уверен — обрезка есть, полный клип на месте
+    answer = { name: 'Стакан 2', sure: false }
+    const unsure = await runTrade('p1')
+    assert.ok(fs.existsSync(unsure.cropPath), `обрезка должна появиться: ${unsure.cropPath}`)
+    assert.ok(fs.existsSync(unsure.clipPath), 'при неуверенном ответе полный клип удалять нельзя')
+
+    // Уверен — полный клип удаляется, как и просили в настройках
+    answer = { name: 'Стакан 2', sure: true }
+    const sure = await runTrade('p2')
+    assert.ok(fs.existsSync(sure.cropPath), `обрезка должна появиться: ${sure.cropPath}`)
+    assert.ok(!fs.existsSync(sure.clipPath), 'при уверенном ответе полный клип удаляется')
+  } finally {
+    if (appCore) await appCore.stop()
+    process.env.LOCALAPPDATA = previousLocalAppData
+    fs.rmSync(tmpHome, { recursive: true, force: true })
+    if (savedDetect) require.cache[detectPath] = savedDetect
+    else delete require.cache[detectPath]
+    if (savedApp) require.cache[appPath] = savedApp
+    else delete require.cache[appPath]
+  }
+
+  console.log('[OK] testAutoCropKeepsFullClipWhenUnsure')
 }
 
 function testPickAreaByVotes() {
@@ -1919,8 +2047,9 @@ async function main() {
   await testCropClipMuteDropsAudio()
   await testCropFallsBackToCpuWhenGpuFails()
   await testMergedPartsDeletedByDefault()
-  testDetectAreaInFrame()
-  testDetectAreaIgnoresAlwaysColoredPanel()
+  testPickAreaFromScan()
+  await testDetectTradeAreaFindsLatePlate()
+  await testAutoCropKeepsFullClipWhenUnsure()
   testPickAreaByVotes()
   await testAutoCropsDieWithTheirClips()
   await testMergedPartsSurviveAlreadyDeletedClips()

@@ -1,4 +1,4 @@
-const { execFile } = require('child_process')
+const { execFile, spawn } = require('child_process')
 const { getFfmpegPath, getFfprobePath, lowerPriority } = require('./ffmpegTools')
 
 // Достаёт один кадр видео сырыми пикселями (RGBA), без промежуточного файла.
@@ -83,4 +83,73 @@ function grabFrameJpeg(filePath, timeSec, maxWidth = MAX_PREVIEW_WIDTH) {
   })
 }
 
-module.exports = { grabFrameRgba, grabFrameJpeg }
+// Полоса строк кадра во всю ширину — много раз подряд, одним проходом ffmpeg.
+//
+// Разбору сделки нужен только низ панелей, зато часто: плашка позиции у
+// секундной сделки горит секунду, и три кадра на клип её пропускали. Отдельный
+// ffmpeg на каждый кадр стоил бы секунду с лишним, а целый кадр двух мониторов
+// весит 40 МБ. Здесь запись читается один раз, а наружу идут только нужные
+// строки: у стаканов во всю высоту это 58 строк, 1.6 МБ на кадр.
+//
+// Кадры отдаются по одному в onFrame и не копятся — на длинном отрезке их
+// сотни. Буфер кадра переиспользуется: onFrame должен разобрать его сразу.
+// y и height — чётные: цвет в yuv420p хранится на пару строк, и только так
+// полоса совпадает до байта с тем же местом целого кадра из grabFrameRgba.
+function scanBand(filePath, { toSec, fps, y, height, width, background = false }, onFrame) {
+  return new Promise((resolve, reject) => {
+    const args = ['-v', 'error']
+    if (background) args.push('-hwaccel', 'auto')
+    args.push('-i', filePath)
+    if (toSec > 0) args.push('-t', String(toSec))
+    args.push(
+      '-map', '0:v:0',
+      '-vf', `fps=${fps},format=yuv420p,crop=${width}:${height}:0:${y}`,
+      '-pix_fmt', 'rgba',
+      '-f', 'rawvideo',
+      'pipe:1'
+    )
+
+    const child = spawn(getFfmpegPath(), args)
+    if (background) lowerPriority(child)
+
+    const frameBytes = width * height * 4
+    const frame = Buffer.allocUnsafe(frameBytes)
+    let filled = 0
+    let index = 0
+    let stderr = ''
+    let failed = null
+
+    child.stdout.on('data', (chunk) => {
+      let offset = 0
+      while (offset < chunk.length && !failed) {
+        const take = Math.min(frameBytes - filled, chunk.length - offset)
+        chunk.copy(frame, filled, offset, offset + take)
+        filled += take
+        offset += take
+        if (filled === frameBytes) {
+          try {
+            onFrame({ timeSec: index / fps, width, height, data: frame })
+          } catch (error) {
+            // Ошибка разбора не должна уйти мимо: здесь обработчик потока, и
+            // необработанное исключение уронило бы всю программу.
+            failed = error
+            child.kill()
+          }
+          index++
+          filled = 0
+        }
+      }
+    })
+    child.stderr.on('data', (data) => {
+      if (stderr.length < 4000) stderr += data
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (failed) return reject(failed)
+      if (code !== 0) return reject(new Error(`Не удалось прочитать полосу кадра: ${stderr.trim() || `код ${code}`}`))
+      resolve(index)
+    })
+  })
+}
+
+module.exports = { grabFrameRgba, grabFrameJpeg, scanBand }
