@@ -95,6 +95,9 @@ function grabFrameJpeg(filePath, timeSec, maxWidth = MAX_PREVIEW_WIDTH) {
 // сотни. Буфер кадра переиспользуется: onFrame должен разобрать его сразу.
 // y и height — чётные: цвет в yuv420p хранится на пару строк, и только так
 // полоса совпадает до байта с тем же местом целого кадра из grabFrameRgba.
+// Вырезаем ДО пересчёта цвета: пересчитывать весь кадр двух мониторов ради
+// полусотни строк — это почти вся работа впустую, а кадров тут до тридцати
+// в секунду.
 function scanBand(filePath, { toSec, fps, y, height, width, background = false }, onFrame) {
   return new Promise((resolve, reject) => {
     const args = ['-v', 'error']
@@ -103,7 +106,7 @@ function scanBand(filePath, { toSec, fps, y, height, width, background = false }
     if (toSec > 0) args.push('-t', String(toSec))
     args.push(
       '-map', '0:v:0',
-      '-vf', `fps=${fps},format=yuv420p,crop=${width}:${height}:0:${y}`,
+      '-vf', `fps=${fps},crop=${width}:${height}:0:${y},format=yuv420p`,
       '-pix_fmt', 'rgba',
       '-f', 'rawvideo',
       'pipe:1'

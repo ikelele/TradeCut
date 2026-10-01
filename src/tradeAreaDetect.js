@@ -57,8 +57,12 @@ const BOTTOM_STRIP_RATIO = 0.042
 const MIN_STRIP_PX = 24
 
 // Насколько должно прибавиться цветного в полосе, чтобы считать, что плашка
-// загорелась.
-const MIN_SCORE = 0.05
+// загорелась. Плашка в нынешней раскладке автора прибавляет 13-33% (замерено
+// по сорока обрезкам с 28 сентября). А всплывающее уведомление Windows в
+// правом нижнем углу — бот присылает его через полсекунды после входа, и
+// ложится оно ровно на дно крайнего стакана — прибавляет 6.5%. При пороге
+// в 5% оно сходило за плашку.
+const MIN_SCORE = 0.1
 
 // Высота пробной полосы для второго признака, в долях высоты кадра
 const BAND_RATIO = 0.04
@@ -82,6 +86,11 @@ const MIN_BAND_DELTA = 0.01
 // Теперь нижняя полоса читается десять раз в секунду, и ищется то место, где
 // плашка ЗАГОРЕЛАСЬ около входа и горела примерно столько, сколько шла сделка.
 const SCAN_FPS = 10
+// Сделку короче двух секунд читаем каждый кадр записи: у сделки на 0.2
+// секунды плашка горит пять-шесть кадров, и при десяти в секунду в разбор
+// попадали один-два — на грани моргания.
+const SCAN_FPS_SHORT = 30
+const SHORT_TRADE_SEC = 2
 // Насколько реальный вход в клипе расходится с ожидаемым. Время сделки — из
 // журнала терминала по часам биржи, запись — по часам компьютера, а конец
 // буфера OBS программа узнаёт по времени файла, которое на полторы секунды
@@ -99,8 +108,8 @@ const MIN_BASELINE_SEC = 0.3
 const MAX_LIT_SCAN_SEC = 12
 // Меньше двух кадров — моргание интерфейса, а не позиция
 const MIN_LIT_FRAMES = 2
-// Столько кадров подряд плашка может «мигнуть», не прерывая горения
-const MAX_GAP_FRAMES = 2
+// Столько плашка может «мигнуть», не прерывая горения
+const MAX_GAP_SEC = 0.2
 // Одна и та же позиция бывает открыта в нескольких панелях — например, монета
 // стоит в двух стаканах. Тогда плашки загораются и гаснут разом, и это не
 // «две позиции, выбрать нельзя», а одна — годится любая из панелей.
@@ -162,7 +171,7 @@ function median(values) {
 }
 
 // Отрезки времени, когда в полосе области горело заметно больше обычного.
-function findLitRuns(samples, names, afterSec, baseline) {
+function findLitRuns(samples, names, afterSec, baseline, maxGapFrames) {
   const runs = []
   names.forEach((name, index) => {
     let run = null
@@ -176,7 +185,7 @@ function findLitRuns(samples, names, afterSec, baseline) {
         run.frames++
         run.growth += growth
         misses = 0
-      } else if (run && ++misses > MAX_GAP_FRAMES) {
+      } else if (run && ++misses > maxGapFrames) {
         runs.push(run)
         run = null
         misses = 0
@@ -191,13 +200,13 @@ function findLitRuns(samples, names, afterSec, baseline) {
 //
 // samples — [{ timeSec, scores }]: доля цветного в нижней полосе каждой
 // области (в порядке names) на каждом прочитанном кадре. hint — где в клипе
-// ожидается вход (entrySec), сколько шла сделка (tradeSec) и докуда клип
-// прочитан (scanEndSec).
+// ожидается вход (entrySec), сколько шла сделка (tradeSec), докуда клип
+// прочитан (scanEndSec) и сколько кадров в секунду (fps).
 //
 // Возвращает { winner, groups }: groups — все места, где плашка загоралась
 // около входа (одновременные панели собраны вместе), winner — то из них, что
 // подходит к сделке, либо null, если выбрать нельзя.
-function pickAreaFromScan(samples, names, { entrySec, tradeSec, scanEndSec }) {
+function pickAreaFromScan(samples, names, { entrySec, tradeSec, scanEndSec, fps = SCAN_FPS }) {
   if (!Array.isArray(names) || names.length < 2) return { winner: null, groups: [] }
 
   const baselineUntil = Math.max(BASELINE_FROM_SEC + MIN_BASELINE_SEC, entrySec - ENTRY_SLACK_SEC)
@@ -207,8 +216,9 @@ function pickAreaFromScan(samples, names, { entrySec, tradeSec, scanEndSec }) {
   // сдвигать «обычное» для всей области.
   const baseline = names.map((_, index) => median(before.map((sample) => sample.scores[index])))
 
-  const frameSec = 1 / SCAN_FPS
-  const runs = findLitRuns(samples, names, baselineUntil, baseline)
+  const frameSec = 1 / fps
+  const maxGapFrames = Math.max(1, Math.round(MAX_GAP_SEC * fps))
+  const runs = findLitRuns(samples, names, baselineUntil, baseline, maxGapFrames)
     .filter((run) => run.frames >= MIN_LIT_FRAMES && Math.abs(run.start - entrySec) <= ENTRY_SLACK_SEC)
     .sort((a, b) => a.start - b.start)
 
@@ -328,7 +338,7 @@ const MIN_BASELINE_CLIP_SEC = 2
 const SAMPLE_POINTS = [0.3, 0.5, 0.7]
 
 // Первый признак: полоса внизу по всему отрезку около входа.
-async function scanBottomStrips(clipPath, areas, size, toSec) {
+async function scanBottomStrips(clipPath, areas, size, toSec, fps) {
   const { scanBand } = require('./videoFrame')
   const strips = bottomStrips(areas, size.width, size.height)
   if (strips.length < 2) return null
@@ -339,7 +349,7 @@ async function scanBottomStrips(clipPath, areas, size, toSec) {
   const bottom = Math.min(size.height, Math.ceil(Math.max(...strips.map((strip) => strip.y1)) / 2) * 2)
 
   const samples = []
-  await scanBand(clipPath, { toSec, fps: SCAN_FPS, y: top, height: bottom - top, width: size.width, background: true }, (band) => {
+  await scanBand(clipPath, { toSec, fps, y: top, height: bottom - top, width: size.width, background: true }, (band) => {
     samples.push({
       timeSec: band.timeSec,
       scores: strips.map((strip) => shareIn(band, strip.x0, strip.x1, strip.y0 - top, strip.y1 - top))
@@ -407,12 +417,13 @@ async function detectTradeArea(clipPath, areas, log = () => {}, hint = {}) {
     ? Number(hint.tradeSec)
     : Math.max(0, duration - entrySec)
   const scanEndSec = Math.min(duration, entrySec + Math.min(tradeSec, MAX_LIT_SCAN_SEC) + ENTRY_SLACK_SEC)
+  const fps = tradeSec < SHORT_TRADE_SEC ? SCAN_FPS_SHORT : SCAN_FPS
 
   let plateSummary = 'не читалась'
   try {
-    const scan = await scanBottomStrips(clipPath, areas, size, scanEndSec)
+    const scan = await scanBottomStrips(clipPath, areas, size, scanEndSec, fps)
     if (scan) {
-      const { winner, groups } = pickAreaFromScan(scan.samples, scan.names, { entrySec, tradeSec, scanEndSec })
+      const { winner, groups } = pickAreaFromScan(scan.samples, scan.names, { entrySec, tradeSec, scanEndSec, fps })
       if (winner) {
         const others = winner.runs.filter((run) => run !== winner.best).map((run) => `«${run.name}»`)
         log(`Область сделки определена как «${winner.best.name}»: плашка горела ${winner.seconds.toFixed(1)}с,`
@@ -450,5 +461,6 @@ module.exports = {
   bottomStrips,
   shareIn,
   MIN_SCORE,
-  SCAN_FPS
+  SCAN_FPS,
+  SCAN_FPS_SHORT
 }

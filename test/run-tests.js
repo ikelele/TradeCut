@@ -1192,6 +1192,15 @@ function testPickAreaFromScan() {
   assert.strictEqual(both.winner, null)
   assert.strictEqual(both.groups.length, 2)
 
+  // Уведомление Windows о сделке всплывает через полсекунды после входа и
+  // ложится на дно крайнего стакана. Цветного в нём немного — аватарка, —
+  // и плашкой оно считаться не должно: ни рядом с настоящей, ни вместо неё.
+  const toast = { area: 3, from: 6.9, to: 8.2, share: 0.065 }
+  const withToast = pickAreaFromScan(makeScan(names, 8.2, [{ area: 1, from: 6.2, to: 7.5 }, toast]), names, hint(1.35, 8.2))
+  assert.strictEqual(withToast.winner && withToast.winner.best.name, 'Стакан 2', 'уведомление не должно мешать плашке')
+  assert.strictEqual(pickAreaFromScan(makeScan(names, 8.2, [toast]), names, hint(0.2, 8.2)).winner, null,
+    'одно уведомление без плашки — не повод вырезать стакан под ним')
+
   // Длинную сделку читаем не целиком: плашка горит до конца прочитанного, и
   // это не расхождение с длительностью.
   const long = pickAreaFromScan(makeScan(names, 20.5, [{ area: 1, from: 6.1, to: 20.5 }]), names, hint(300, 20.5))
@@ -1213,7 +1222,7 @@ async function testDetectTradeAreaFindsLatePlate() {
   const os = require('os')
   const { detectTradeArea } = require('../src/tradeAreaDetect')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-plate-'))
-  const plate = (x) => `drawbox=x=${x}:y=216:w=160:h=24:color=0xc83232:t=fill:enable='between(t,6.2,7.4)'`
+  const plate = (x, from = 6.2, to = 7.4) => `drawbox=x=${x}:y=216:w=160:h=24:color=0xc83232:t=fill:enable='between(t,${from},${to})'`
   const makeClip = (name, boxes) => {
     const clip = path.join(dir, name)
     execFileSync('ffmpeg', [
@@ -1237,6 +1246,12 @@ async function testDetectTradeAreaFindsLatePlate() {
     // Монета в двух панелях — одна позиция, режется первая из них
     const twice = await detectTradeArea(makeClip('twice.mp4', [plate(160), plate(480)]), areas, () => {}, hint)
     assert.deepStrictEqual(twice, { name: 'Стакан 2', sure: true })
+
+    // Сделка на доли секунды: плашка горит три кадра записи. Десять кадров в
+    // секунду поймали бы из них один — меньше порога, — поэтому короткие
+    // сделки читаются каждым кадром.
+    const blink = await detectTradeArea(makeClip('blink.mp4', [plate(320, 6.25, 6.35)]), areas, () => {}, { entrySec: 5, tradeSec: 0.2 })
+    assert.deepStrictEqual(blink, { name: 'Стакан 3', sure: true })
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
