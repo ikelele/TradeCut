@@ -212,9 +212,19 @@ function createApp({ config, log, onStatusChange, onClipReady, onHistoryChanged,
         //
         // Определению нужно знать, где в клипе вход и сколько шла сделка:
         // плашка позиции горит ровно тогда, и у секундной сделки — секунду.
+        //
+        // Запасной признак — для TigerTrade, у которого плашки нет. У Vataga
+        // плашка есть всегда, и если её не видно, запасной признак гадает по
+        // шуму: у QNT 30 сентября и 1 октября (позиции по 31 и 42 секунды,
+        // плашки нет ни в одном стакане) и у MAGMA 2 октября — все три раза
+        // чужой стакан. Лучше оставить клип целым, чем вырезать не ту монету.
         const tradeSec = Math.max(0, (entry.trade.exitTimeMs - entry.trade.entryTimeMs) / 1000)
         const detected = detect
-          ? await detectTradeArea(entry.clipPath, areas, log, { entrySec: config.clip.paddingBeforeSec, tradeSec })
+          ? await detectTradeArea(entry.clipPath, areas, log, {
+            entrySec: config.clip.paddingBeforeSec,
+            tradeSec,
+            standOutFallback: config.terminal.type !== 'vataga'
+          })
           : null
         let areaName = detected ? detected.name : null
         // Уверенность нужна, чтобы удалить полный клип. Заданная заранее

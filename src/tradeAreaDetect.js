@@ -106,7 +106,10 @@ const MIN_BASELINE_SEC = 0.3
 // Длинную сделку целиком не смотрим: плашка горит до выхода, и дюжины секунд
 // хватает, чтобы её увидеть. Целиком — это минуты работы ради того же ответа.
 const MAX_LIT_SCAN_SEC = 12
-// Меньше двух кадров — моргание интерфейса, а не позиция
+// Меньше двух кадров — моргание интерфейса, а не позиция. Кроме мгновенной
+// сделки: у MAGMA 2 октября позиция прожила 36 миллисекунд, и плашка горела
+// ровно один кадр записи — 19% цвета при нуле во всех остальных стаканах.
+// Больше следа такая сделка не оставляет, и одного кадра ей хватает.
 const MIN_LIT_FRAMES = 2
 // Столько плашка может «мигнуть», не прерывая горения
 const MAX_GAP_SEC = 0.2
@@ -218,8 +221,9 @@ function pickAreaFromScan(samples, names, { entrySec, tradeSec, scanEndSec, fps 
 
   const frameSec = 1 / fps
   const maxGapFrames = Math.max(1, Math.round(MAX_GAP_SEC * fps))
+  const minFrames = tradeSec * fps < MIN_LIT_FRAMES ? 1 : MIN_LIT_FRAMES
   const runs = findLitRuns(samples, names, baselineUntil, baseline, maxGapFrames)
-    .filter((run) => run.frames >= MIN_LIT_FRAMES && Math.abs(run.start - entrySec) <= ENTRY_SLACK_SEC)
+    .filter((run) => run.frames >= minFrames && Math.abs(run.start - entrySec) <= ENTRY_SLACK_SEC)
     .sort((a, b) => a.start - b.start)
 
   const groups = []
@@ -394,6 +398,8 @@ async function detectByStandOut(clipPath, areas, size, duration, log) {
 //
 // hint — где в клипе ожидается вход (entrySec: запас до входа из настроек) и
 // сколько шла сделка (tradeSec). Без него вход считается в начале клипа.
+// hint.standOutFallback = false — не спрашивать запасной признак вовсе (см.
+// app.js: у Vataga он чаще ошибается, чем угадывает).
 //
 // Возвращает { name, sure } либо null — "определить не удалось", и это
 // нормальный ответ, а не сбой. sure = false, когда решил запасной признак:
@@ -437,6 +443,12 @@ async function detectTradeArea(clipPath, areas, log = () => {}, hint = {}) {
     }
   } catch (error) {
     plateSummary = `не прочиталась: ${error.message}`
+  }
+
+  if (hint.standOutFallback === false) {
+    log(`Определить область сделки не удалось. Полоса внизу: ${plateSummary}.`
+      + ' Без плашки запасной признак гадает и выбирал чужой стакан — его не спрашиваю.')
+    return null
   }
 
   // Первый признак промолчал — спрашиваем запасной. Порядок именно такой:

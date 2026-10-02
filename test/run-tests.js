@@ -1129,10 +1129,10 @@ async function testMergedPartsDeletedByDefault() {
 // придуманных замерах: доля цветного в полосе каждой области на каждом кадре.
 //
 // lit — [{ area, from, to, share }]: в какой области, когда и насколько горело.
-function makeScan(names, durationSec, lit) {
+function makeScan(names, durationSec, lit, fps = 10) {
   const samples = []
-  for (let k = 0; k / 10 < durationSec; k++) {
-    const timeSec = Number((k / 10).toFixed(1))
+  for (let k = 0; k / fps < durationSec; k++) {
+    const timeSec = Number((k / fps).toFixed(3))
     const scores = names.map((_, index) => {
       let score = 0.02 // серый интерфейс: немного цветного есть всегда
       for (const item of lit) {
@@ -1201,6 +1201,15 @@ function testPickAreaFromScan() {
   assert.strictEqual(pickAreaFromScan(makeScan(names, 8.2, [toast]), names, hint(0.2, 8.2)).winner, null,
     'одно уведомление без плашки — не повод вырезать стакан под ним')
 
+  // Мгновенная сделка — позиция прожила 36 миллисекунд, как у MAGMA 2
+  // октября: плашка горит ровно один кадр записи. Ей одного кадра хватает, а
+  // у сделки подлиннее один кадр — моргание, а не плашка.
+  const flashScan = makeScan(names, 7.1, [{ area: 1, from: 5.0, to: 5.01 }], 30)
+  const flash = pickAreaFromScan(flashScan, names, { entrySec: 5, tradeSec: 0.04, scanEndSec: 7.1, fps: 30 })
+  assert.strictEqual(flash.winner && flash.winner.best.name, 'Стакан 2', 'мгновенной сделке хватает одного кадра плашки')
+  assert.strictEqual(pickAreaFromScan(flashScan, names, { entrySec: 5, tradeSec: 1.2, scanEndSec: 7.1, fps: 30 }).winner, null,
+    'у сделки на 1.2 секунды один кадр — моргание')
+
   // Длинную сделку читаем не целиком: плашка горит до конца прочитанного, и
   // это не расхождение с длительностью.
   const long = pickAreaFromScan(makeScan(names, 20.5, [{ area: 1, from: 6.1, to: 20.5 }]), names, hint(300, 20.5))
@@ -1259,6 +1268,41 @@ async function testDetectTradeAreaFindsLatePlate() {
   console.log('[OK] testDetectTradeAreaFindsLatePlate')
 }
 
+// Без плашки у Vataga программа не гадает. Запасной признак смотрит, где
+// «что-то появилось», и без плашки находил это в чужом стакане: QNT 30
+// сентября и 1 октября, MAGMA 2 октября. Здесь «что-то» — цветной квадрат
+// посреди третьего стакана: запасной признак его видит, а плашки нет.
+async function testNoPlateNoGuessWhenAsked() {
+  const os = require('os')
+  const { detectTradeArea } = require('../src/tradeAreaDetect')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tt-noplate-'))
+  const clip = path.join(dir, 'no-plate.mp4')
+  execFileSync('ffmpeg', [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', 'color=c=0x3c3e42:s=640x240:d=8.2:r=30',
+    '-vf', "drawbox=x=320:y=100:w=160:h=24:color=0xc83232:t=fill:enable='gte(t,2)'",
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+    clip
+  ])
+  const areas = [0, 1, 2, 3].map((k) => ({
+    name: `Стакан ${k + 1}`, x: k * 160, y: 0, width: 160, height: 240, sourceWidth: 640, sourceHeight: 240
+  }))
+
+  try {
+    // Для TigerTrade запасной признак — основной: отвечает, но без уверенности
+    const guess = await detectTradeArea(clip, areas, () => {}, { entrySec: 5, tradeSec: 1.2 })
+    assert.deepStrictEqual(guess, { name: 'Стакан 3', sure: false })
+
+    // А когда его просят не спрашивать — честное «не знаю»
+    const none = await detectTradeArea(clip, areas, () => {}, { entrySec: 5, tradeSec: 1.2, standOutFallback: false })
+    assert.strictEqual(none, null)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+
+  console.log('[OK] testNoPlateNoGuessWhenAsked')
+}
+
 // Полный клип после автоматической обрезки удаляется, только когда область
 // определена уверенно. 1 октября запасной признак вырезал соседний стакан, а
 // полный клип удалился вслед, и сделку было уже не вернуть.
@@ -1275,9 +1319,10 @@ async function testAutoCropKeepsFullClipWhenUnsure() {
   const savedApp = require.cache[appPath]
 
   let answer = null
+  const hints = []
   require.cache[detectPath] = {
     id: detectPath, filename: detectPath, loaded: true,
-    exports: { detectTradeArea: async () => answer }
+    exports: { detectTradeArea: async (_clip, _areas, _log, hint) => { hints.push(hint); return answer } }
   }
   delete require.cache[appPath]
 
@@ -1356,6 +1401,12 @@ async function testAutoCropKeepsFullClipWhenUnsure() {
     const unsure = await runTrade('p1')
     assert.ok(fs.existsSync(unsure.cropPath), `обрезка должна появиться: ${unsure.cropPath}`)
     assert.ok(fs.existsSync(unsure.clipPath), 'при неуверенном ответе полный клип удалять нельзя')
+
+    // Определению сказано, где в клипе вход и сколько шла сделка, и что у
+    // Vataga без плашки гадать не надо
+    assert.strictEqual(hints[0].entrySec, 2)
+    assert.ok(Math.abs(hints[0].tradeSec - 1) < 0.01, `длительность сделки: ${hints[0].tradeSec}`)
+    assert.strictEqual(hints[0].standOutFallback, false)
 
     // Уверен — полный клип удаляется, как и просили в настройках
     answer = { name: 'Стакан 2', sure: true }
@@ -2064,6 +2115,7 @@ async function main() {
   await testMergedPartsDeletedByDefault()
   testPickAreaFromScan()
   await testDetectTradeAreaFindsLatePlate()
+  await testNoPlateNoGuessWhenAsked()
   await testAutoCropKeepsFullClipWhenUnsure()
   testPickAreaByVotes()
   await testAutoCropsDieWithTheirClips()
